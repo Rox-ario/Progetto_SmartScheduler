@@ -58,9 +58,6 @@ def main():
     # --- STEP 5: Risoluzione (Solver) ---
     solver = cp_model.CpSolver()
 
-    # Impostiamo un limite di tempo (es. 10 secondi) per la ricerca della prima soluzione valida
-    solver.parameters.max_time_in_seconds = 10.0
-
     status = solver.solve(model)
 
     # --- Stampa dei Risultati ---
