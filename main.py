@@ -11,7 +11,7 @@ def main():
     model_output_path = os.path.join("src", "scheduler_model.py")
 
     print("==================================================")
-    print(" AVVIO SMART SCHEDULER - AGENTIC FRAMEWORK")
+    print("AVVIO SMART SCHEDULER - AGENTIC FRAMEWORK")
     print("==================================================")
 
     # ── FASE 0: System Building ────────────────────────────
