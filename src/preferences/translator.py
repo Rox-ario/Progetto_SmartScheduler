@@ -53,9 +53,9 @@ STEP 1 — CLASSIFICA la preferenza:
 
 STEP 2 — GENERA il codice:
   - Per HARD CONSTRAINT (divieto):
-    `model.Add(shifts[(w, d, s)] == 0)`
+    `model.add(shifts[(w, d, s)] == 0)`
   - Per HARD CONSTRAINT (obbligo):
-    `model.Add(shifts[(w, d, s)] == 1)`
+    `model.add(shifts[(w, d, s)] == 1)`
     ⚠ Usa questo SOLO se la richiesta è un obbligo esplicito e assoluto,
       non una semplice preferenza.
   - Per SOFT CONSTRAINT (indesiderato):
@@ -76,14 +76,14 @@ ESEMPI (Few-Shot con Chain-of-Thought)
 
 --- Esempio 1 ---
 Input: "Il lavoratore 3 non può assolutamente lavorare nel turno di Notte il giorno 15."
-Ragionamento: "non può assolutamente" → HARD CONSTRAINT (divieto). Giorno 15
+Ragionamento: "non può assolutamente" -> HARD CONSTRAINT (divieto). Giorno 15
   dell'orizzonte, turno Notte = s=2.
 Output:
-model.Add(shifts[(3, 15, 2)] == 0)
+model.add(shifts[(3, 15, 2)] == 0)
 
 --- Esempio 2 ---
 Input: "Il lavoratore 0 preferisce i turni di mattina il giorno 2 e il giorno 3."
-Ragionamento: "preferisce" → SOFT CONSTRAINT (desiderato). Non è un obbligo.
+Ragionamento: "preferisce" -> SOFT CONSTRAINT (desiderato). Non è un obbligo.
   Aumento il peso di soddisfazione per quei turni.
 Output:
 satisfaction_weights[(0, 2, 0)] = 10
@@ -92,7 +92,7 @@ satisfaction_weights[(0, 3, 0)] = 10
 --- Esempio 3 ---
 Input: "Il lavoratore 5 non vuole lavorare nel weekend del primo fine settimana
   (giorni 5 e 6 dell'orizzonte)."
-Ragionamento: "non vuole" → SOFT CONSTRAINT (indesiderato). Non è un divieto
+Ragionamento: "non vuole" -> SOFT CONSTRAINT (indesiderato). Non è un divieto
   assoluto. Abbasso il peso per tutti i turni di quei giorni.
 Output:
 satisfaction_weights[(5, 5, 0)] = -10
@@ -104,26 +104,35 @@ satisfaction_weights[(5, 6, 2)] = -10
 
 --- Esempio 4 ---
 Input: "Il lavoratore 2 ha un impegno personale e non sarà disponibile il giorno 8."
-Ragionamento: "non sarà disponibile" → HARD CONSTRAINT (divieto su tutti i turni
+Ragionamento: "non sarà disponibile" -> HARD CONSTRAINT (divieto su tutti i turni
   di quel giorno).
 Output:
-model.Add(shifts[(2, 8, 0)] == 0)
-model.Add(shifts[(2, 8, 1)] == 0)
-model.Add(shifts[(2, 8, 2)] == 0)
+for s in range(3):
+    model.add(shifts[(2, 8, s)] == 0)
 
 --- Esempio 5 ---
 Input: "Il lavoratore 1 di solito lavora bene di notte."
-Ragionamento: "di solito lavora bene" → AMBIGUO. Non è chiaro se è una
+Ragionamento: "di solito lavora bene" -> AMBIGUO. Non è chiaro se è una
   preferenza del lavoratore, un'osservazione, o un obbligo.
 Output:
 AMBIGUOUS: preferenza o obbligo non distinguibili dall'input
 
 --- Esempio 6 ---
 Input: "Il lavoratore 1 preferisce i turni di mattina."
-Ragionamento: "preferisce" su tutti i giorni → SOFT CONSTRAINT su d=0..30.
+Ragionamento: "preferisce" su tutti i giorni -> SOFT CONSTRAINT su d=0..30.
 Output:
 for d in range(31):
     satisfaction_weights[(1, d, 0)] = 10
+
+--Esempio 7--
+Input: "Il lavoratore 2 è disponibile/preferisce lavorare durante i giorni di vacanza"
+Ragionamento: "preferisce" sui giorni -> SOFT CONSTRAINT su d=25,26,1,6.
+Output:
+for s in range(3):
+    satisfaction_weights[(2, 25, s)] = 10
+    satisfaction_weights[(2, 26, s)] = 10
+    satisfaction_weights[(2, 1, s)] = 10
+    satisfaction_weights[(2, 6, s)] = 10
 ════════════════════════════════════════
 ORA TRADUCI LA SEGUENTE RICHIESTA
 ════════════════════════════════════════

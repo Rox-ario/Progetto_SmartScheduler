@@ -1,6 +1,7 @@
 import os
 import google.genai as genai
 from dotenv import load_dotenv
+import time
 from google.genai import types
 
 
@@ -88,7 +89,7 @@ REGOLE DI OUTPUT
 
     def generate_model_file(self, draft_filepath: str, output_filepath: str):
         """
-        Legge il draft, invia a Gemini, e salva il codice Python generato.
+        Legge il draft, invia a Gemini con Exponential Backoff, e salva il codice.
         """
         print(f"[*] Lettura del draft da: {draft_filepath}...")
         try:
@@ -98,8 +99,6 @@ REGOLE DI OUTPUT
             print(f"Errore: Impossibile trovare il file {draft_filepath}")
             return False
 
-        # Il draft va SOLO nel contents, il system prompt SOLO in system_instruction.
-        # Passarli entrambi nella stessa stringa causa comportamenti imprevedibili.
         user_message = f"Ecco il Model Draft da tradurre in codice:\n\n{draft_content}"
 
         print("[*] Contattando l'Agente LLM (System Builder) per generare il codice OR-Tools...")
@@ -109,40 +108,62 @@ REGOLE DI OUTPUT
             system_instruction=self.system_prompt
         )
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=user_message,
-                config=config
-            )
+        # --- GESTIONE EXPONENTIAL BACKOFF CON LIMITE MASSIMO ---
+        max_allowed_wait = 10  # Limite in secondi imposto
+        current_wait = 2       # Tempo di attesa base per il primo fallimento
+        response = None
 
-            # Pulizia dell'output
-            python_code = response.text.strip()
-            if python_code.startswith("```python"):
-                python_code = python_code[9:]
-            if python_code.startswith("```"):
-                python_code = python_code[3:]
-            if python_code.endswith("```"):
-                python_code = python_code[:-3]
-            python_code = python_code.strip()
-
-            # Verifica che il marcatore sia presente prima di salvare
-            marker = "# <<< PREFERENCES_INJECTION_POINT >>>"
-            if marker not in python_code:
-                print(
-                    "[-] ATTENZIONE: Il codice generato non contiene il marcatore "
-                    f"'{marker}'.\n"
-                    "    La Fase 1 (preferenze) non potrà essere iniettata.\n"
-                    "    Il file NON è stato salvato. Riprova."
+        while True:
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=user_message,
+                    config=config
                 )
-                return False
+                break  # Se la chiamata va a buon fine, rompiamo il ciclo
 
-            with open(output_filepath, 'w', encoding='utf-8') as out_file:
-                out_file.write(python_code)
+            except Exception as e:
+                error_msg = str(e)
+                # Controlliamo se l'errore è causato dal server (503) o limiti di richieste (429)
+                if "503" in error_msg or "429" in error_msg:
+                    if current_wait > max_allowed_wait:
+                        print(f"\n[-] ERRORE CRITICO: Il server continua a essere sovraccarico.")
+                        print(f"[-] Il tempo di attesa richiesto per il prossimo tentativo ({current_wait}s) supera il limite massimo configurato di {max_allowed_wait}s.")
+                        print(f"[-] Dettagli errore originale: {error_msg}")
+                        return False
 
-            print(f"[+] Codice generato con successo e salvato in: {output_filepath}")
-            return True
+                    print(f"[-] Server sovraccarico (503/429). Attendo {current_wait} secondi prima di riprovare...")
+                    time.sleep(current_wait)
+                    current_wait *= 2  # Exponential backoff: 2 -> 4 -> 8 -> STOP
+                else:
+                    # Per qualsiasi altro tipo di errore (es. chiave API non valida), interrompiamo subito
+                    print(f"[-] Errore fatale durante la generazione: {error_msg}")
+                    return False
+        # -------------------------------------------------------
 
-        except Exception as e:
-            print(f"[-] Errore durante la generazione: {str(e)}")
+        # Pulizia dell'output
+        python_code = response.text.strip()
+        if python_code.startswith("```python"):
+            python_code = python_code[9:]
+        if python_code.startswith("```"):
+            python_code = python_code[3:]
+        if python_code.endswith("```"):
+            python_code = python_code[:-3]
+        python_code = python_code.strip()
+
+        # Verifica che il marcatore sia presente prima di salvare
+        marker = "# <<< PREFERENCES_INJECTION_POINT >>>"
+        if marker not in python_code:
+            print(
+                "[-] ATTENZIONE: Il codice generato non contiene il marcatore "
+                f"'{marker}'.\n"
+                "    La Fase 1 (preferenze) non potrà essere iniettata.\n"
+                "    Il file NON è stato salvato. Riprova."
+            )
             return False
+
+        with open(output_filepath, 'w', encoding='utf-8') as out_file:
+            out_file.write(python_code)
+
+        print(f"[+] Codice generato con successo e salvato in: {output_filepath}")
+        return True
