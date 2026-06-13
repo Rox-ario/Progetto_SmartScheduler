@@ -1,7 +1,3 @@
-# ==========================================
-# SMART SCHEDULER - MODEL DRAFT SPECIFICATION
-# ==========================================
-
 [1. SCHEDULING HORIZON]
 - Start Date: 7th December 2026
 - End Date: 6th January 2027
