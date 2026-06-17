@@ -2,6 +2,7 @@
 - Start Date: 7th December 2026
 - End Date: 6th January 2027
 - Total Days: 31 days (Index 0 to 30)
+- Holidays: 24th and 25th December 2026 (Christmas Day) (index 17 and 18), 1st January 2027 (New Year's Day) (index 24), 6th January 2027 (Epiphany) (index 29), 8th December 2027 (index 1) (Immaculate Conception)
 
 [2. AVAILABLE WORKERS]
 - Total Workers (N): 13
@@ -38,3 +39,11 @@ HC5_NO_SUBSEQUENT_SHIFTS:
 HC6_MANDATORY_WEEKLY_REST:
 - Description: Each worker must be ensured a day of rest.
 - Logic: In any consecutive 7-day block, every worker must have at least one completely free day (0 shifts assigned). Workers can express preferences on WHICH day this should be via Soft Constraints.
+
+HC7_NO_EMPTY_SHIFTS:
+- Description: Each shift must be covered by at least two workers.
+- Logic: For each shift on each day, the sum of boolean assignments across all workers must be >= 1.
+
+HC8_MAX_WORKERS_PER_SHIFT:
+- Description: Each shift can be covered by a maximum of 3 workers.
+- Logic: For each shift on each day, the sum of boolean assignments across all workers must be <= 3.
