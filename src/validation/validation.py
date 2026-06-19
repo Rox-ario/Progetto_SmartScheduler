@@ -78,11 +78,11 @@ class HardConstraintVerifier:
                         f"Worker {w} eccede le 36h ({weekly_hours}h) nella settimana {start_day}-{end_day}."
                     )
 
-    def _check_staffing_requirements(self, min_workers=2, max_workers=None):
+    def _check_staffing_requirements(self, min_workers, max_workers=None):
         """Verifica che ogni turno rispetti il range di copertura (min e max) richiesto."""
         for d in range(self.num_days):
             for s in range(3):
-                workers_in_shift = self.schedule.get(d, {}).get(s, [])
+                workers_in_shift = self.schedule.get(d, {}).get(s, []) # Se 'd' non esiste, restituisce {}; se 's' non esiste, restituisce [].
                 num_workers = len(workers_in_shift)
 
                 # Controllo Under-staffing (copertura minima)
@@ -112,20 +112,27 @@ class FairnessEvaluationAgent:
         metrics = {w: {'disadvantaged_shifts': 0, 'preference_score': 0} for w in range(self.num_workers)}
 
         for d in range(self.num_days):
-            # Assumiamo Giorno 0 = Lunedì -> 5 (Sabato) e 6 (Domenica) sono weekend
+            #Giorno 0 = Lunedì -> 5 (Sabato) e 6 (Domenica) sono weekend
             is_weekend = (d % 7 == 5 or d % 7 == 6)
             for s in range(3):
                 is_night = (s == 2) # Il turno 2 è la notte
-                workers = self.schedule.get(d, {}).get(s, [])
+                workers = self.schedule.get(d, {}).get(s, []) #prende i lavoratori che lavorano di notte in quel giorno
 
                 for w in workers:
-                    # 1. Calcolo turni disagiati (Formula: Notti + Weekend)
-                    if is_weekend or is_night:
-                        metrics[w]['disadvantaged_shifts'] += 1
+                    #Controlliamo PRIMA se il turno era desiderato
+                    is_desired = w in self.preferences and (d, s) in self.preferences[w]
 
-                    # 2. Calcolo soddisfazione (Match tra turno assegnato e desiderata)
-                    if w in self.preferences and (d, s) in self.preferences[w]:
+                    if is_desired:
+                        # 1. Se lo voleva, sale SOLO la soddisfazione (nessun disagio registrato)
                         metrics[w]['preference_score'] += 1
+                    else:
+                        # 2. Se NON lo voleva, calcoliamo quanto è disagiato
+                        if is_weekend or is_night:
+                            metrics[w]['disadvantaged_shifts'] += 1
+
+                        if is_weekend and is_night:
+                            # Penalità extra per notte nel weekend
+                            metrics[w]['disadvantaged_shifts'] += 0.5
 
         return metrics
 

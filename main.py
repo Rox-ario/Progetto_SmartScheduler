@@ -4,7 +4,6 @@ from ortools.sat.python import cp_model  # Aggiunto per decodificare lo stato de
 from src.system_builder import SystemBuilderAgent
 from src.preferences.translator import PreferenceTranslator
 
-
 def main():
     # Percorsi dei file
     draft_path = os.path.join("data", "model_draft.txt")
