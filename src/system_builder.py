@@ -35,8 +35,8 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
 ━━━ 2. build_base_constraints(self) ━━━
 - Implementa TUTTI gli Hard Constraints definiti nel draft
 - Usa `self.model`, `self.shifts` per tutti i vincoli
-- Usa `self.model.Add(...)` per vincoli lineari
-- Usa `self.model.AddImplication(...)` per implicazioni booleane
+- Usa `self.model.add(...)` per vincoli lineari
+- Usa `self.model.addImplication(...)` per implicazioni booleane
 
 ━━━ 3. apply_preferences(self) ━━━
 QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
@@ -64,6 +64,7 @@ QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
 - Crea `solver = cp_model.CpSolver()`
 - Invoca `status = solver.Solve(self.model)`
 - Restituisce una tupla `(status, solver)` senza stampare nulla
+- Aggiungi il limite di tempo di 60 secondi: `solver.parameters.max_time_in_seconds = 60.0`
 
 ════════════════════════════════════════
 REGOLE CRITICHE
@@ -87,9 +88,10 @@ REGOLE DI OUTPUT
 - Nessuna introduzione, nessun commento finale, nessuna spiegazione.
 - Se l'indentazione è sbagliata o il marcatore manca, il sistema andrà in crash."""
 
-    def generate_model_file(self, draft_filepath: str, output_filepath: str):
+    def generate_model_file(self, draft_filepath: str, output_filepath: str, feedback_prompt: str = None):
         """
         Legge il draft, invia a Gemini con Exponential Backoff, e salva il codice.
+        Se feedback_prompt è fornito, agisce in modalità "Revisione" per correggere gli errori.
         """
         print(f"[*] Lettura del draft da: {draft_filepath}...")
         try:
@@ -99,11 +101,21 @@ REGOLE DI OUTPUT
             print(f"Errore: Impossibile trovare il file {draft_filepath}")
             return False
 
-        user_message = f"Ecco il Model Draft da tradurre in codice:\n\n{draft_content}"
+        # --- GESTIONE DEL FEEDBACK LOOP ---
+        if feedback_prompt:
+            print("[*] Modalità REVISIONE: Integrazione del feedback nel prompt...")
+            user_message = (
+                f"{feedback_prompt}\n"
+                f"----------------------------------------\n"
+                f"Per tuo riferimento, ecco il Model Draft originale per non perdere i vincoli base:\n\n{draft_content}"
+            )
+        else:
+            print("[*] Modalità GENERAZIONE: Creazione modello base...")
+            user_message = f"Ecco il Model Draft da tradurre in codice:\n\n{draft_content}"
 
         print("[*] Contattando l'Agente LLM (System Builder) per generare il codice OR-Tools...")
         config = types.GenerateContentConfig(
-            temperature=0.1,
+            temperature=0.1,  # Teniamo la temperatura bassa per codice deterministico
             top_p=0.9,
             system_instruction=self.system_prompt
         )
@@ -124,19 +136,15 @@ REGOLE DI OUTPUT
 
             except Exception as e:
                 error_msg = str(e)
-                # Controlliamo se l'errore è causato dal server (503) o limiti di richieste (429)
                 if "503" in error_msg or "429" in error_msg:
                     if current_wait > max_allowed_wait:
                         print(f"\n[-] ERRORE CRITICO: Il server continua a essere sovraccarico.")
-                        print(f"[-] Il tempo di attesa richiesto per il prossimo tentativo ({current_wait}s) supera il limite massimo configurato di {max_allowed_wait}s.")
-                        print(f"[-] Dettagli errore originale: {error_msg}")
                         return False
 
                     print(f"[-] Server sovraccarico (503/429). Attendo {current_wait} secondi prima di riprovare...")
                     time.sleep(current_wait)
-                    current_wait *= 2  # Exponential backoff: 2 -> 4 -> 8 -> STOP
+                    current_wait *= 2
                 else:
-                    # Per qualsiasi altro tipo di errore (es. chiave API non valida), interrompiamo subito
                     print(f"[-] Errore fatale durante la generazione: {error_msg}")
                     return False
         # -------------------------------------------------------

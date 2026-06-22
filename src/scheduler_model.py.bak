@@ -1,0 +1,135 @@
+from ortools.sat.python import cp_model
+
+class SmartSchedulerModel:
+    def __init__(self, num_workers, num_days):
+        self.num_workers = num_workers
+        self.num_days = num_days
+        self.model = cp_model.CpModel()
+
+        # Shift definitions
+        # Shift 0 (Morning): 08:00 - 14:00 (Duration: 6h, Shift Weight: 1)
+        # Shift 1 (Afternoon): 14:00 - 20:00 (Duration: 6h, Shift Weight: 1)
+        # Shift 2 (Night): 20:00 - 08:00 (Duration: 12h, Shift Weight: 2)
+        self.shift_durations = {0: 6, 1: 6, 2: 12}
+        self.shift_weights = {0: 1, 1: 1, 2: 2}
+        self.num_shifts = 3
+
+        # Create shift variables: shifts[(w, d, s)] is true if worker w works shift s on day d.
+        self.shifts = {}
+        for w in range(self.num_workers):
+            for d in range(self.num_days):
+                for s in range(self.num_shifts):
+                    self.shifts[(w, d, s)] = self.model.new_bool_var(f'shift_w{w}_d{d}_s{s}')
+
+        # Initialize satisfaction weights for the objective function
+        self.satisfaction_weights = {}
+        for w in range(self.num_workers):
+            for d in range(self.num_days):
+                for s in range(self.num_shifts):
+                    self.satisfaction_weights[(w, d, s)] = 0 # Default to 0, will be populated by preferences
+
+    def build_base_constraints(self):
+        # HC1_MAX_HOURS_PER_WEEK: Each employee's working time cannot exceed 36 hours per week.
+        # In any rolling 7-day window, sum of hours worked by a single worker must be <= 36.
+        for w in range(self.num_workers):
+            for d in range(self.num_days - 6): # Rolling 7-day window (d to d+6)
+                hours_worked_in_window = []
+                for day_in_window in range(d, d + 7):
+                    for s in range(self.num_shifts):
+                        hours_worked_in_window.append(self.shifts[(w, day_in_window, s)] * self.shift_durations[s])
+                self.model.add(sum(hours_worked_in_window) <= 36)
+
+        # HC2_MONTHLY_WORKLOAD: Each worker must cover exactly 25 shifts in a month (weighted sum).
+        # Sum of "Shift Weights" for each worker across the 31-day horizon must be exactly equal to 25.
+        for w in range(self.num_workers):
+            total_weighted_shifts = []
+            for d in range(self.num_days):
+                for s in range(self.num_shifts):
+                    total_weighted_shifts.append(self.shifts[(w, d, s)] * self.shift_weights[s])
+            self.model.add(sum(total_weighted_shifts) == 25)
+
+        # HC3_NIGHT_SHIFT_REST: Two free days after each night shift.
+        # If a worker is assigned Shift 2 (Night) on Day D, they must have 0 shifts assigned on Day D+1 and Day D+2.
+        for w in range(self.num_workers):
+            for d in range(self.num_days - 2): # Ensure d+1 and d+2 are valid days
+                # If worker w works night shift on day d
+                night_shift_on_d = self.shifts[(w, d, 2)]
+                
+                # Then worker w must have 0 shifts on day d+1
+                self.model.add(sum(self.shifts[(w, d + 1, s)] for s in range(self.num_shifts)) == 0).only_enforce_if(night_shift_on_d)
+                
+                # And worker w must have 0 shifts on day d+2
+                self.model.add(sum(self.shifts[(w, d + 2, s)] for s in range(self.num_shifts)) == 0).only_enforce_if(night_shift_on_d)
+
+        # HC4_MAX_ONE_SHIFT_PER_DAY: Each worker can cover up to one shift per day.
+        for w in range(self.num_workers):
+            for d in range(self.num_days):
+                self.model.add(sum(self.shifts[(w, d, s)] for s in range(self.num_shifts)) <= 1)
+
+        # HC5_NO_SUBSEQUENT_SHIFTS: A worker cannot cover two subsequent shifts (Afternoon on D, Morning on D+1).
+        for w in range(self.num_workers):
+            for d in range(self.num_days - 1): # Ensure d+1 is a valid day
+                # If worker w works Afternoon shift on day d AND Morning shift on day d+1, this is forbidden.
+                # Equivalent to: shifts[(w, d, 1)] + shifts[(w, d + 1, 0)] <= 1
+                self.model.add(self.shifts[(w, d, 1)] + self.shifts[(w, d + 1, 0)] <= 1)
+
+        # HC6_MANDATORY_WEEKLY_REST: Each worker must have at least one completely free day in any 7-day block.
+        for w in range(self.num_workers):
+            for d in range(self.num_days - 6): # Rolling 7-day window (d to d+6)
+                free_days_in_window = []
+                for day_in_window in range(d, d + 7):
+                    # Create a boolean variable that is true if the worker has no shifts on this day
+                    is_free_day = self.model.new_bool_var(f'is_free_day_w{w}_d{day_in_window}_window_start{d}')
+                    
+                    # Constraint: is_free_day is true if sum of shifts for worker w on day_in_window is 0
+                    self.model.add(sum(self.shifts[(w, day_in_window, s)] for s in range(self.num_shifts)) == 0).only_enforce_if(is_free_day)
+                    
+                    # Constraint: is_free_day is false if sum of shifts for worker w on day_in_window is >= 1
+                    self.model.add(sum(self.shifts[(w, day_in_window, s)] for s in range(self.num_shifts)) >= 1).only_enforce_if(is_free_day.Not())
+                    
+                    free_days_in_window.append(is_free_day)
+                
+                # At least one of these days must be a free day
+                self.model.add(sum(free_days_in_window) >= 1)
+
+        # HC7_NO_EMPTY_SHIFTS: Each shift must be covered by at least two workers.
+        for d in range(self.num_days):
+            for s in range(self.num_shifts):
+                self.model.add(sum(self.shifts[(w, d, s)] for w in range(self.num_workers)) >= 2)
+
+        # HC8_MAX_WORKERS_PER_SHIFT: Each shift can be covered by a maximum of 3 workers.
+        for d in range(self.num_days):
+            for s in range(self.num_shifts):
+                self.model.add(sum(self.shifts[(w, d, s)] for w in range(self.num_workers)) <= 3)
+
+    def apply_preferences(self):
+        """
+        Metodo dedicato all'iniezione delle preferenze generate dalla Fase 1.
+        Gli alias locali espongono gli attributi della classe con i nomi
+        che il codice generato da Gemini si aspetta.
+        NON modificare i nomi degli alias: sono il contratto con il LLM.
+        """
+        model = self.model
+        shifts = self.shifts
+        satisfaction_weights = self.satisfaction_weights
+
+        # <<< PREFERENCES_INJECTION_POINT >>>
+
+    def build_objective(self):
+        # Objective: Maximize the sum of satisfaction weights for assigned shifts.
+        objective_vars = []
+        objective_coeffs = []
+        for w in range(self.num_workers):
+            for d in range(self.num_days):
+                for s in range(self.num_shifts):
+                    objective_vars.append(self.shifts[(w, d, s)])
+                    objective_coeffs.append(self.satisfaction_weights[(w, d, s)])
+        
+        self.model.maximize(cp_model.LinearExpr.weighted_sum(objective_vars, objective_coeffs))
+
+    def solve(self):
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 60.0
+        solver.parameters.log_search_progress = True
+        status = solver.solve(self.model)
+        return (status, solver)
