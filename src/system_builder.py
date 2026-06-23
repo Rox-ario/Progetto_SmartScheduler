@@ -36,7 +36,7 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
 - Implementa TUTTI gli Hard Constraints definiti nel draft
 - Usa `self.model`, `self.shifts` per tutti i vincoli
 - Usa `self.model.add(...)` per vincoli lineari
-- Usa `self.model.addImplication(...)` per implicazioni booleane
+- Usa `self.model.AddImplication(...)` per implicazioni booleane
 
 ━━━ 3. apply_preferences(self) ━━━
 QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
@@ -121,11 +121,13 @@ REGOLE DI OUTPUT
         )
 
         # --- GESTIONE EXPONENTIAL BACKOFF CON LIMITE MASSIMO ---
-        max_allowed_wait = 10  # Limite in secondi imposto
+        max_retries = 5        # Numero massimo di tentativi prima di arrendersi
+        max_allowed_wait = 300 # Attesa massima cumulativa in secondi (5 minuti)
         current_wait = 2       # Tempo di attesa base per il primo fallimento
+        total_waited = 0       # Tempo totale già aspettato
         response = None
 
-        while True:
+        for retry_attempt in range(max_retries + 1):
             try:
                 response = self.client.models.generate_content(
                     model=self.model_name,
@@ -136,16 +138,24 @@ REGOLE DI OUTPUT
 
             except Exception as e:
                 error_msg = str(e)
-                if "503" in error_msg or "429" in error_msg:
-                    if current_wait > max_allowed_wait:
-                        print(f"\n[-] ERRORE CRITICO: Il server continua a essere sovraccarico.")
+                is_503 = "503" in error_msg
+                is_429 = "429" in error_msg
+                if is_503 or is_429:
+                    code = "503 (Server Overload)" if is_503 else "429 (Rate Limit / Quota Esaurita)"
+                    if retry_attempt >= max_retries or total_waited >= max_allowed_wait:
+                        print(f"\n[-] ERRORE CRITICO [{code}]: fallito dopo {retry_attempt} tentativi ({total_waited}s di attesa totale).")
+                        if is_429:
+                            print("    → Possibile causa: quota giornaliera/al-minuto esaurita per questa API Key.")
+                            print("    → Controlla: https://aistudio.google.com/app/apikey")
+                        print(f"    → Dettaglio errore completo: {error_msg}")
                         return False
 
-                    print(f"[-] Server sovraccarico (503/429). Attendo {current_wait} secondi prima di riprovare...")
+                    print(f"[-] {code} - tentativo {retry_attempt + 1}/{max_retries}. Attendo {current_wait}s...")
                     time.sleep(current_wait)
-                    current_wait *= 2
+                    total_waited += current_wait
+                    current_wait = min(current_wait * 2, max_allowed_wait - total_waited)
                 else:
-                    print(f"[-] Errore fatale durante la generazione: {error_msg}")
+                    print(f"[-] Errore fatale durante la generazione:\n    {error_msg}")
                     return False
         # -------------------------------------------------------
 
