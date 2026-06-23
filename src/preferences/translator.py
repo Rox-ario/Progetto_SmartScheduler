@@ -19,7 +19,7 @@ class PreferenceTranslator:
             )
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = os.environ.get("MODEL_USED")
 
         self.system_prompt = """Sei un esperto di Programmazione a Vincoli con Google OR-Tools (CP-SAT),
 specializzato nella traduzione di linguaggio naturale in codice Python formale.

@@ -14,7 +14,7 @@ class SystemBuilderAgent:
             raise ValueError("API Key per Gemini mancante. Imposta GEMINI_API_KEY.")
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = 'gemini-2.5-flash'
+        self.model_name = os.environ.get("MODEL_USED")
 
         self.system_prompt = """Sei un Senior Software Engineer specializzato in Ricerca Operativa e Google OR-Tools (CP-SAT).
 Il tuo compito è leggere un documento di specifiche (Model Draft) e generare un file Python completo, funzionante e privo di errori.
@@ -27,7 +27,7 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
 
 ━━━ 1. __init__(self, num_workers, num_days) ━━━
 - Inizializza `self.model = cp_model.CpModel()`
-- Crea `self.shifts = {}` con variabili booleane NewBoolVar per ogni (w, d, s)
+- Crea `self.shifts = {}` con variabili booleane `new_bool_var` per ogni (w, d, s)
 - Crea `self.satisfaction_weights = {}` inizializzato a 0 per ogni (w, d, s)
 - Definisce `self.shift_durations` e `self.shift_weights` come dizionari
 - Per la "rolling 7-day window" usa: `for d in range(self.num_days - 6):`
@@ -36,7 +36,7 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
 - Implementa TUTTI gli Hard Constraints definiti nel draft
 - Usa `self.model`, `self.shifts` per tutti i vincoli
 - Usa `self.model.add(...)` per vincoli lineari
-- Usa `self.model.AddImplication(...)` per implicazioni booleane
+- Usa `self.model.add_implication(...)` per implicazioni booleane
 
 ━━━ 3. apply_preferences(self) ━━━
 QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
@@ -57,12 +57,12 @@ QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
 ━━━ 4. build_objective(self) ━━━
 - Costruisce la funzione obiettivo che massimizza la somma pesata degli shift assegnati
 - Usa `self.satisfaction_weights[(w, d, s)]` come coefficienti
-- Usa `self.model.Maximize(cp_model.LinearExpr.WeightedSum(...))`
+- Usa `self.model.maximize(cp_model.LinearExpr.weighted_sum(...))`
 - NON invocare il solver qui
 
 ━━━ 5. solve(self) ━━━
 - Crea `solver = cp_model.CpSolver()`
-- Invoca `status = solver.Solve(self.model)`
+- Invoca `status = solver.solve(self.model)`
 - Restituisce una tupla `(status, solver)` senza stampare nulla
 - Aggiungi il limite di tempo di 60 secondi: `solver.parameters.max_time_in_seconds = 60.0`
 
@@ -78,6 +78,11 @@ REGOLE CRITICHE
   (a parte gli alias e il marcatore) che verrà popolato esternamente.
 
 - Usa `from ortools.sat.python import cp_model` come unico import.
+
+- CRITICO - Negazione di BoolVar: usa SEMPRE `.Not()` (N maiuscola).
+  NON usare mai `.not()` (n minuscola): `not` è una keyword Python riservata
+  e causa SyntaxError immediato. Esempio corretto:
+  `self.model.add_implication(var_a, var_b.Not())`
 
 ════════════════════════════════════════
 REGOLE DI OUTPUT
