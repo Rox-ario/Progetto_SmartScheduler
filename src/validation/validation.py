@@ -29,7 +29,7 @@ class HardConstraintVerifier:
             worker_shifts[w].sort(key=lambda x: (x[0], x[1]))
         return worker_shifts
 
-    def verify_all(self, min_workers_per_shift=2, max_workers_per_shift=3):
+    def verify_all(self, min_workers_per_shift, max_workers_per_shift):
         worker_shifts = self._get_worker_shifts()
         self._check_shift_rules(worker_shifts)
         self._check_legal_work_limits(worker_shifts)

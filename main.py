@@ -26,7 +26,7 @@ def main():
     translator = PreferenceTranslator()
 
     # Parametri del ciclo di Feedback
-    MAX_RETRIES = 3
+    MAX_RETRIES = 10
     attempt = 1
     is_schedule_valid = False
     feedback_prompt = None
@@ -78,7 +78,7 @@ def main():
             # ── FASE 3: Schedule Verification ─────────────────
             print("[FASE 3] Esecuzione Hard Constraint Verifier...")
             verifier = HardConstraintVerifier(schedule_dict, num_workers=13, num_days=31)
-            is_valid, validation_result = verifier.verify_all(min_workers=2, max_workers=3)
+            is_valid, validation_result = verifier.verify_all(2, 3)
 
             if is_valid:
                 print("\n[+] SUCCESSO! La turnazione rispetta tutti i vincoli legali.")
@@ -89,7 +89,7 @@ def main():
                 feedback_builder = FeedbackPromptBuilder()
                 feedback_prompt = feedback_builder.build_revision_prompt(validation_result)
                 print("--- PROMPT GENERATO PER L'AGENTE ---")
-                print(feedback_prompt[:200] + "...\n[Prompt troncato per leggibilità]")
+                print(feedback_prompt)
 
         else:
             print("[-] STATO SOLVER: INFEASIBLE/UNKNOWN. Generazione feedback per rilassare i vincoli...")

@@ -64,7 +64,7 @@ QUESTO METODO È OBBLIGATORIO E DEVE ESSERE ESATTAMENTE COSÌ:
 - Crea `solver = cp_model.CpSolver()`
 - Invoca `status = solver.solve(self.model)`
 - Restituisce una tupla `(status, solver)` senza stampare nulla
-- Aggiungi il limite di tempo di 60 secondi: `solver.parameters.max_time_in_seconds = 60.0`
+- Aggiungi il limite di tempo di 120 secondi: `solver.parameters.max_time_in_seconds = 120.0`
 
 ════════════════════════════════════════
 REGOLE CRITICHE

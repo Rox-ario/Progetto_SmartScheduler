@@ -1,5 +1,8 @@
+import ast
+
 from dotenv import load_dotenv
 import os
+import ast
 import re
 import shutil
 import google.genai as genai
@@ -29,9 +32,9 @@ CONTESTO DEL MODELLO
 ════════════════════════════════════════
 - Modello inizializzato: `model = cp_model.CpModel()`
 - Dizionario di variabili booleane: `shifts[(w, d, s)]`
-  - `w`: ID lavoratore (intero ≥ 0)
+  - `w`: ID lavoratore (intero >= 0)
   - `d`: giorno dell'orizzonte di scheduling (da 0 a 30, dove 0 = 7 dicembre 2026)
-  - `s`: turno → 0 = Mattina (8-14), 1 = Pomeriggio (14-20), 2 = Notte (20-8)
+  - `s`: turno -> 0 = Mattina (8-14), 1 = Pomeriggio (14-20), 2 = Notte (20-8)
 - Dizionario dei pesi di soddisfazione (soft): `satisfaction_weights[(w, d, s)]`
   - Ogni peso è un intero. Un valore ALTO indica che assegnare quel turno è DESIDERATO.
   - Un valore BASSO (o negativo) indica che quel turno è INDESIDERATO.
@@ -43,32 +46,47 @@ CONTESTO DEL MODELLO
 REGOLE DI CLASSIFICAZIONE E GENERAZIONE
 ════════════════════════════════════════
 
-STEP 1 — CLASSIFICA la preferenza:
-  - HARD CONSTRAINT: obbligo o divieto assoluto, spesso legato a motivi legali,
-    medici, o contrattuali. Parole chiave: "non può", "è vietato", "deve
-    obbligatoriamente", "non è disponibile".
-  - SOFT CONSTRAINT: preferenza o desiderio. Parole chiave: "preferisce",
-    "vorrebbe evitare", "se possibile", "gradisce".
-  - AMBIGUO: se non riesci a classificare con certezza, non generare codice.
+Esistono TRE categorie. Classificale nell'ordine indicato.
 
-STEP 2 — GENERA il codice:
-  - Per HARD CONSTRAINT (divieto):
+CATEGORIA 1 — HARD CONSTRAINT PERSONALE (indisponibilità dichiarata dal lavoratore):
+  Condizione: il lavoratore dichiara esplicitamente di non poter essere presente,
+  per motivi personali, medici o contrattuali che esulano dalla legge già codificata.
+  Parole chiave: "non può", "non sarà disponibile", "è impossibile per me",
+  "ho un impegno", "non è disponibile il giorno X".
+  Codice da generare:
     `model.add(shifts[(w, d, s)] == 0)`
-  - Per HARD CONSTRAINT (obbligo):
-    `model.add(shifts[(w, d, s)] == 1)`
-    ⚠ Usa questo SOLO se la richiesta è un obbligo esplicito e assoluto,
-      non una semplice preferenza.
-  - Per SOFT CONSTRAINT (indesiderato):
-    `satisfaction_weights[(w, d, s)] = -10`
-  - Per SOFT CONSTRAINT (desiderato):
-    `satisfaction_weights[(w, d, s)] = +10`
+  ATTENZIONE: usa questa categoria SOLO per divieti. Non esiste un hard constraint
+  personale di tipo "obbligo" (es. "voglio lavorare il giorno X" è sempre una preferenza).
 
-STEP 3 — OUTPUT:
-  - Genera SOLO il codice Python richiesto. Nessun markdown, nessun commento,
-    nessuna spiegazione.
-  - Se la richiesta è AMBIGUA o impossibile da tradurre con certezza,
-    rispondi ESCLUSIVAMENTE con la stringa:
-    AMBIGUOUS: <descrizione breve del problema in meno di 10 parole>
+CATEGORIA 2 — SOFT CONSTRAINT (preferenza o desiderio):
+  Condizione: il lavoratore esprime una preferenza, un desiderio, o una tolleranza.
+  Non è un divieto assoluto: il solver può ignorarlo se necessario.
+  Parole chiave: "preferisce", "vorrebbe evitare", "se possibile", "gradisce",
+  "tollera", "non ama", "è disponibile per", "può lavorare durante".
+  Codice da generare:
+    - Turno desiderato:    `satisfaction_weights[(w, d, s)] = +10`
+    - Turno indesiderato:  `satisfaction_weights[(w, d, s)] = -10`
+
+CATEGORIA 3 — AMBIGUO:
+  Condizione: non è possibile classificare con certezza nelle categorie 1 o 2.
+  Risposta: `AMBIGUOUS: <descrizione breve del problema in meno di 10 parole>`
+
+REGOLA CRITICA — cosa NON generare mai:
+  - NON generare mai `model.add(shifts[(w, d, s)] == 1)`.
+    Un lavoratore non può obbligare il sistema ad assegnargli un turno.
+  - NON replicare vincoli già presenti nel model_draft.txt (limiti orari settimanali,
+    riposo post-notte, ecc.). Quelli sono gestiti dal System Builder. Se la preferenza
+    di un lavoratore coincide con un vincolo legale già codificato, ignorala silenziosamente.
+
+════════════════════════════════════════
+REGOLE DI OUTPUT
+════════════════════════════════════════
+- Rispondi ESCLUSIVAMENTE con codice Python puro.
+- NON scrivere "Ragionamento:", "Output:", né alcuna etichetta.
+- Se vuoi spiegare la classificazione, usa commenti Python (righe che iniziano con #).
+- Non aggiungere NULLA prima o dopo il codice.
+- Non usare blocchi markdown (```python ... ```).
+- Se la richiesta è ambigua: AMBIGUOUS: <descrizione breve>
 
 ════════════════════════════════════════
 ESEMPI (Few-Shot con Chain-of-Thought)
@@ -76,25 +94,22 @@ ESEMPI (Few-Shot con Chain-of-Thought)
 
 --- Esempio 1 ---
 Input: "Il lavoratore 3 non può assolutamente lavorare nel turno di Notte il giorno 15."
-Ragionamento: "non può assolutamente" -> HARD CONSTRAINT (divieto). Giorno 15
-  dell'orizzonte, turno Notte = s=2.
 Output:
+# Categoria 1: indisponibilità dichiarata. Giorno 15, turno Notte = s=2.
 model.add(shifts[(3, 15, 2)] == 0)
 
 --- Esempio 2 ---
 Input: "Il lavoratore 0 preferisce i turni di mattina il giorno 2 e il giorno 3."
-Ragionamento: "preferisce" -> SOFT CONSTRAINT (desiderato). Non è un obbligo.
-  Aumento il peso di soddisfazione per quei turni.
 Output:
+# Categoria 2: preferenza positiva su turni specifici.
 satisfaction_weights[(0, 2, 0)] = 10
 satisfaction_weights[(0, 3, 0)] = 10
 
 --- Esempio 3 ---
 Input: "Il lavoratore 5 non vuole lavorare nel weekend del primo fine settimana
   (giorni 5 e 6 dell'orizzonte)."
-Ragionamento: "non vuole" -> SOFT CONSTRAINT (indesiderato). Non è un divieto
-  assoluto. Abbasso il peso per tutti i turni di quei giorni.
 Output:
+# Categoria 2: preferenza negativa. Non è un divieto assoluto.
 satisfaction_weights[(5, 5, 0)] = -10
 satisfaction_weights[(5, 5, 1)] = -10
 satisfaction_weights[(5, 5, 2)] = -10
@@ -104,42 +119,132 @@ satisfaction_weights[(5, 6, 2)] = -10
 
 --- Esempio 4 ---
 Input: "Il lavoratore 2 ha un impegno personale e non sarà disponibile il giorno 8."
-Ragionamento: "non sarà disponibile" -> HARD CONSTRAINT (divieto su tutti i turni
-  di quel giorno).
 Output:
+# Categoria 1: indisponibilità dichiarata su tutti i turni del giorno 8.
 for s in range(3):
     model.add(shifts[(2, 8, s)] == 0)
 
 --- Esempio 5 ---
 Input: "Il lavoratore 1 di solito lavora bene di notte."
-Ragionamento: "di solito lavora bene" -> AMBIGUO. Non è chiaro se è una
-  preferenza del lavoratore, un'osservazione, o un obbligo.
 Output:
-AMBIGUOUS: preferenza o obbligo non distinguibili dall'input
+# Categoria 3: osservazione esterna, non è né una preferenza né un divieto.
+AMBIGUOUS: preferenza o osservazione non distinguibili dall'input
 
 --- Esempio 6 ---
 Input: "Il lavoratore 1 preferisce i turni di mattina."
-Ragionamento: "preferisce" su tutti i giorni -> SOFT CONSTRAINT su d=0..30.
 Output:
+# Categoria 2: preferenza positiva estesa a tutti i giorni dell'orizzonte.
 for d in range(31):
     satisfaction_weights[(1, d, 0)] = 10
 
---Esempio 7--
-Input: "Il lavoratore 2 è disponibile/preferisce lavorare durante i giorni di vacanza"
-Ragionamento: "preferisce" sui giorni -> SOFT CONSTRAINT su d=25,26,1,6.
+--- Esempio 7 ---
+Input: "Il lavoratore 2 è disponibile a lavorare durante i giorni festivi."
 Output:
+# Categoria 2: disponibilità espressa = preferenza positiva, non obbligo.
+# Indici festivi nell'orizzonte: 1 (8 dic), 17 (24 dic), 18 (25 dic), 25 (1 gen), 30 (6 gen).
 for s in range(3):
-    satisfaction_weights[(2, 25, s)] = 10
-    satisfaction_weights[(2, 26, s)] = 10
     satisfaction_weights[(2, 1, s)] = 10
-    satisfaction_weights[(2, 6, s)] = 10
+    satisfaction_weights[(2, 17, s)] = 10
+    satisfaction_weights[(2, 18, s)] = 10
+    satisfaction_weights[(2, 25, s)] = 10
+    satisfaction_weights[(2, 30, s)] = 10
+
 ════════════════════════════════════════
 ORA TRADUCI LA SEGUENTE RICHIESTA
 ════════════════════════════════════════
 Input: {USER_INPUT}
-Ragionamento:
 Output:"""
 
+
+    def _extract_python_code(self, raw_output: str) -> str:
+            """
+            Estrae solo il codice Python valido da un output LLM potenzialmente sporco.
+
+            Strategia a tre strati:
+            1. Cerca blocchi delimitati da ```python ... ``` (caso markdown)
+            2. Salta righe di testo naturale, tienendo solo righe Python-valide
+            3. Verifica la sintassi dell'intero blocco estratto con ast.parse()
+            """
+
+            # Strato 1: rimozione blocchi markdown
+            markdown_pattern = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
+            match = markdown_pattern.search(raw_output)
+            if match:
+                candidate = match.group(1).strip()
+                if self._is_valid_python(candidate):
+                    return candidate
+
+            # Strato 2: filtro riga per riga
+            # Strategia a priorità decrescente:
+            #   1. Righe vuote → sempre tenute
+            #   2. Righe indentate → quasi certamente corpo di un blocco Python
+            #   3. Righe che iniziano con keyword/pattern Python noti → tenute
+            #   4. Fallback sintattico: ast.parse() sulla singola riga —
+            #      qualunque cosa Python consideri valida (incluse assegnazioni
+            #      a variabili arbitrarie come `weekend_pairs = [...]`) viene
+            #      tenuta senza bisogno di aggiorare la whitelist.
+            #   5. Tutto il resto è linguaggio naturale → scartato
+
+            PYTHON_STARTERS = (
+                # keyword e strutture
+                "for ", "if ", "else", "elif ", "while ", "def ", "class ",
+                "import ", "from ", "return ", "with ", "try:", "except",
+                "raise ", "pass", "break", "continue",
+                # pattern OR-Tools specifici del progetto
+                "model.", "shifts[", "satisfaction_weights[",
+                # commenti
+                "#",
+            )
+
+            clean_lines = []
+            for line in raw_output.splitlines():
+                stripped = line.strip()
+
+                # 1. Righe vuote: le teniamo (separano blocchi logici)
+                if not stripped:
+                    clean_lines.append(line)
+                    continue
+
+                # 2. Righe indentate: quasi certamente corpo di un blocco Python
+                if line.startswith(("    ", "\t")):
+                    clean_lines.append(line)
+                    continue
+
+                # 3. Righe che iniziano con pattern Python noti
+                if any(stripped.startswith(p) for p in PYTHON_STARTERS):
+                    clean_lines.append(line)
+                    continue
+
+                # 4. Fallback sintattico: proviamo ast.parse() sulla singola riga.
+                #    Questo cattura assegnazioni libere (es. `weekend_pairs = [...]`)
+                #    e qualsiasi altra costruzione Python non coperta dalla whitelist.
+                if self._is_valid_python(stripped):
+                    clean_lines.append(line)
+                    continue
+
+                # 5. Scarta tutto il resto (linguaggio naturale, etichette tipo "Ragionamento:")
+                print(f"    [parser] Riga scartata (non-Python): {stripped[:60]}")
+
+            candidate = "\n".join(clean_lines).strip()
+
+            # Strato 3: verifica sintattica finale
+            if not candidate:
+                return "AMBIGUOUS: output LLM vuoto dopo il parsing"
+
+            if self._is_valid_python(candidate):
+                return candidate
+
+            # Se la sintassi non è valida, segnala l'errore
+            return f"AMBIGUOUS: codice estratto non è Python valido - {candidate[:100]}"
+
+
+    def _is_valid_python(self, code: str) -> bool:
+        """Verifica sintattica tramite AST. Non esegue mai il codice."""
+        try:
+            ast.parse(code)
+            return True
+        except SyntaxError:
+            return False
     # ─────────────────────────────────────────────
     # LETTURA FILE
     # ─────────────────────────────────────────────
@@ -178,10 +283,10 @@ Output:"""
 
     def translate_preference(self, user_input: str) -> str:
         """
-        Invia una singola preferenza in linguaggio naturale a Gemini
-        e restituisce il codice Python corrispondente (o una stringa AMBIGUOUS:).
+        Invia una singola preferenza a Gemini e restituisce
+        il codice Python estratto in modo sicuro.
         """
-        user_prompt = f"Input: {user_input}\nRagionamento:\nOutput:"
+        user_prompt = f"Input: {user_input}"
 
         config = types.GenerateContentConfig(
             temperature=0.1,
@@ -197,15 +302,12 @@ Output:"""
             )
             raw_output = response.text.strip()
 
-            # Estrae solo la parte dopo "Output:" ignorando il chain-of-thought
-            if "Output:" in raw_output:
-                final_code = raw_output.split("Output:")[-1].strip()
-            else:
-                final_code = raw_output
+            # Gestione AMBIGUOUS esplicita (prima di qualsiasi altra cosa)
+            if raw_output.startswith("AMBIGUOUS:"):
+                return raw_output
 
-            # Rimuove eventuali backtick markdown residui
-            final_code = re.sub(r"```(?:python)?", "", final_code).replace("```", "").strip()
-            return final_code
+            # Parsing a prova di bomba
+            return self._extract_python_code(raw_output)
 
         except Exception as e:
             return f"AMBIGUOUS: Errore API Gemini - {str(e)}"

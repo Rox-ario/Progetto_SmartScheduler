@@ -42,7 +42,7 @@ HC6_MANDATORY_WEEKLY_REST:
 
 HC7_NO_EMPTY_SHIFTS:
 - Description: Each shift must be covered by at least two workers.
-- Logic: For each shift on each day, the sum of boolean assignments across all workers must be >= 1.
+- Logic: For each shift on each day, the sum of boolean assignments across all workers must be >= 2.
 
 HC8_MAX_WORKERS_PER_SHIFT:
 - Description: Each shift can be covered by a maximum of 3 workers.
