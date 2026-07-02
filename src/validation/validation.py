@@ -29,11 +29,11 @@ class HardConstraintVerifier:
             worker_shifts[w].sort(key=lambda x: (x[0], x[1]))
         return worker_shifts
 
-    def verify_all(self, min_workers_per_shift, max_workers_per_shift):
+    def verify_all(self, min_workers_per_shift):
         worker_shifts = self._get_worker_shifts()
         self._check_shift_rules(worker_shifts)
         self._check_legal_work_limits(worker_shifts)
-        self._check_staffing_requirements(min_workers_per_shift, max_workers_per_shift)
+        self._check_staffing_requirements(min_workers_per_shift)
 
         if not self.errors:
             return True, "Tutti i vincoli rigidi (Hard Constraints) sono rispettati."
@@ -78,8 +78,8 @@ class HardConstraintVerifier:
                         f"Worker {w} eccede le 36h ({weekly_hours}h) nella settimana {start_day}-{end_day}."
                     )
 
-    def _check_staffing_requirements(self, min_workers, max_workers=None):
-        """Verifica che ogni turno rispetti il range di copertura (min e max) richiesto."""
+    def _check_staffing_requirements(self, min_workers):
+        """Verifica che ogni turno rispetti la copertura minima richiesta (HC7)."""
         for d in range(self.num_days):
             for s in range(3):
                 workers_in_shift = self.schedule.get(d, {}).get(s, []) # Se 'd' non esiste, restituisce {}; se 's' non esiste, restituisce [].
@@ -90,13 +90,6 @@ class HardConstraintVerifier:
                     self.errors.append(
                         f"Violazione Staffing (Under-staffing): Giorno {d}, Turno {s} "
                         f"ha {num_workers} lavoratori (minimo: {min_workers})."
-                    )
-
-                # Controllo Over-staffing (copertura massima, opzionale)
-                if max_workers is not None and num_workers > max_workers:
-                    self.errors.append(
-                        f"Violazione Staffing (Over-staffing): Giorno {d}, Turno {s} "
-                        f"ha {num_workers} lavoratori (massimo: {max_workers})."
                     )
 
 class FairnessEvaluationAgent:
@@ -112,26 +105,32 @@ class FairnessEvaluationAgent:
         metrics = {w: {'disadvantaged_shifts': 0, 'preference_score': 0} for w in range(self.num_workers)}
 
         for d in range(self.num_days):
-            #Giorno 0 = Lunedì -> 5 (Sabato) e 6 (Domenica) sono weekend
             is_weekend = (d % 7 == 5 or d % 7 == 6)
             for s in range(3):
-                is_night = (s == 2) # Il turno 2 è la notte
-                workers = self.schedule.get(d, {}).get(s, []) #prende i lavoratori che lavorano di notte in quel giorno
+                is_night = (s == 2)
+                workers = self.schedule.get(d, {}).get(s, [])
 
                 for w in workers:
-                    #Controlliamo PRIMA se il turno era desiderato
-                    is_desired = w in self.preferences and (d, s) in self.preferences[w]
+                    # Estraiamo le preferenze del lavoratore (di default liste vuote se non ne ha)
+                    worker_prefs = self.preferences.get(w, {'positive': [], 'negative': []})
+
+                    is_desired = (d, s) in worker_prefs.get('positive', [])
+                    is_undesired = (d, s) in worker_prefs.get('negative', [])
 
                     if is_desired:
-                        # 1. Se lo voleva, sale SOLO la soddisfazione (nessun disagio registrato)
+                        # 1. Se lo voleva, sale SOLO la soddisfazione
                         metrics[w]['preference_score'] += 1
+                    elif is_undesired:
+                        # 2. Se NON lo voleva, è un malus enorme. Aggiungiamo 2 punti di disagio base.
+                        metrics[w]['disadvantaged_shifts'] += 2
+                        # Se in più è notte o weekend, il disagio si accumula ulteriormente
+                        if is_weekend or is_night:
+                            metrics[w]['disadvantaged_shifts'] += 0.5
                     else:
-                        # 2. Se NON lo voleva, calcoliamo quanto è disagiato
+                        # 3. Turno neutro (non espresso nelle preferenze): logica standard
                         if is_weekend or is_night:
                             metrics[w]['disadvantaged_shifts'] += 1
-
                         if is_weekend and is_night:
-                            # Penalità extra per notte nel weekend
                             metrics[w]['disadvantaged_shifts'] += 0.5
 
         return metrics

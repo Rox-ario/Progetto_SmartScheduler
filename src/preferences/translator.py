@@ -400,10 +400,10 @@ Output:"""
             result = self.translate_preference(pref)
 
             if result.startswith("AMBIGUOUS:"):
-                print(f"    ⚠  {result}")
+                print(f"    [!]  {result}")
                 ambiguous_items.append((pref, result))
             else:
-                print(f"    ✓  Codice generato ({len(result.splitlines())} righe)")
+                print(f"    [OK]  Codice generato ({len(result.splitlines())} righe)")
                 # Aggiunge un commento di provenienza per leggibilità nel file finale
                 snippet = f"# Preferenza: {pref}\n{result}"
                 valid_snippets.append(snippet)
@@ -413,21 +413,21 @@ Output:"""
             full_code_block = "\n\n".join(valid_snippets)
             print(f"\n  Iniezione di {len(valid_snippets)} blocco/i in '{scheduler_path}'...")
             self._inject_into_scheduler(scheduler_path, full_code_block)
-            print("  ✓  Iniezione completata.")
+            print("  [OK]  Iniezione completata.")
         else:
             print("\n  Nessun codice valido da iniettare.")
 
         # Step 4 — report
-        print(f"\n{'─'*60}")
+        print(f"\n{'-'*60}")
         print(f"  REPORT FINALE")
         print(f"  Preferenze tradotte:  {len(valid_snippets)}")
         print(f"  Preferenze ambigue:   {len(ambiguous_items)}")
 
         if ambiguous_items:
-            print("\n  ⚠  Preferenze ambigue (richiesta revisione manuale):")
+            print("\n  [!]  Preferenze ambigue (richiesta revisione manuale):")
             for pref, reason in ambiguous_items:
                 print(f"    - \"{pref[:60]}...\"")
-                print(f"      → {reason}")
+                print(f"      -> {reason}")
 
         print(f"{'='*60}\n")
 

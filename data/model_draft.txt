@@ -2,7 +2,7 @@
 - Start Date: 7th December 2026
 - End Date: 6th January 2027
 - Total Days: 31 days (Index 0 to 30)
-- Holidays: 24th and 25th December 2026 (Christmas Day) (index 17 and 18), 1st January 2027 (New Year's Day) (index 24), 6th January 2027 (Epiphany) (index 29), 8th December 2027 (index 1) (Immaculate Conception)
+- Holidays: 24th and 25th December 2026 (Christmas Day) (index 17 and 18), 1st January 2027 (New Year's Day) (index 25), 6th January 2027 (Epiphany) (index 30), 8th December 2026 (index 1) (Immaculate Conception)
 
 [2. AVAILABLE WORKERS]
 - Total Workers (N): 13
@@ -20,7 +20,6 @@ HC1_MAX_HOURS_PER_WEEK:
 - Description: Each employee's working time cannot exceed 36 hours per week.
 - Logic: In any rolling 7-day window, the sum of hours worked (6 for Morning/Afternoon, 12 for Night) by a single worker must be <= 36.
 
-HC2_MONTHLY_WORKLOAD:
 - Description: Each worker must cover exactly 25 shifts in a month.
 - Logic: The sum of "Shift Weights" (Morning=1, Afternoon=1, Night=2) for each worker across the 31-day horizon must be exactly equal to 25.
 
@@ -43,7 +42,3 @@ HC6_MANDATORY_WEEKLY_REST:
 HC7_NO_EMPTY_SHIFTS:
 - Description: Each shift must be covered by at least two workers.
 - Logic: For each shift on each day, the sum of boolean assignments across all workers must be >= 2.
-
-HC8_MAX_WORKERS_PER_SHIFT:
-- Description: Each shift can be covered by a maximum of 3 workers.
-- Logic: For each shift on each day, the sum of boolean assignments across all workers must be <= 3.

@@ -150,9 +150,8 @@ REGOLE DI OUTPUT
                     if retry_attempt >= max_retries or total_waited >= max_allowed_wait:
                         print(f"\n[-] ERRORE CRITICO [{code}]: fallito dopo {retry_attempt} tentativi ({total_waited}s di attesa totale).")
                         if is_429:
-                            print("    → Possibile causa: quota giornaliera/al-minuto esaurita per questa API Key.")
-                            print("    → Controlla: https://aistudio.google.com/app/apikey")
-                        print(f"    → Dettaglio errore completo: {error_msg}")
+                            print("    -> Possibile causa: quota giornaliera/al-minuto esaurita per questa API Key.")
+                        print(f"    -> Dettaglio errore completo: {error_msg}")
                         return False
 
                     print(f"[-] {code} - tentativo {retry_attempt + 1}/{max_retries}. Attendo {current_wait}s...")
