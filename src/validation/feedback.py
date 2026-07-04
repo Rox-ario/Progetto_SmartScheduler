@@ -37,3 +37,106 @@ class FeedbackPromptBuilder:
                 Fornisci esclusivamente il blocco di codice Python aggiornato (Import, Model, Variables, Constraints, Solver) senza codice fittizio o troncato. Spiega brevemente quale vincolo hai aggiunto o corretto.
                 """
         return prompt
+
+
+class RefinementPromptBuilder:
+    """
+    Costruisce il prompt per la Fase 4 (Schedule Refinement).
+
+    L'agente di verifica simbolico (FairnessEvaluationAgent) ha identificato
+    il lavoratore più svantaggiato e calcolato i satisfaction_score di tutti.
+    Questo builder compone il prompt che chiede al Drafting Agent (LLM) di
+    aggiungere vincoli hard per alzare il punteggio minimo.
+    """
+    def __init__(self, system_context="SmartScheduler CP-SAT Model"):
+        self.system_context = system_context
+
+    def build_refinement_prompt(
+        self,
+        most_disadvantaged_worker_id,
+        current_min_score,
+        satisfaction_scores,
+        current_code
+    ):
+        """
+        Genera il prompt di refinement per il Drafting Agent.
+
+        Args:
+            most_disadvantaged_worker_id: ID del lavoratore con lo score più basso.
+            current_min_score: Il satisfaction_score attuale del lavoratore più svantaggiato.
+            satisfaction_scores: Dizionario {worker_id: score} di tutti i lavoratori.
+            current_code: Il codice Python corrente del modello OR-Tools.
+
+        Returns:
+            Il prompt completo da inviare al Drafting Agent.
+        """
+        # Formattazione dei punteggi per contesto
+        scores_summary = "\n".join(
+            f"  - Worker {w}: satisfaction_score = {score}"
+            for w, score in sorted(satisfaction_scores.items())
+        )
+
+        prompt = f"""Sei lo Schedule Drafting Agent (Esperto in Python e Google OR-Tools CP-SAT).
+L'agente di verifica simbolica della fairness ha analizzato la schedulazione corrente
+generata dal tuo modello per lo {self.system_context}.
+
+═══════════════════════════════════════
+RISULTATI DELLA VALUTAZIONE DI FAIRNESS
+═══════════════════════════════════════
+
+Satisfaction score attuale di ogni lavoratore (calcolato come somma pesata dei
+satisfaction_weights per i turni assegnati — la stessa formula usata dalla
+funzione obiettivo del modello):
+
+{scores_summary}
+
+Il lavoratore più svantaggiato è: Worker {most_disadvantaged_worker_id}
+Il suo satisfaction_score attuale è: {current_min_score}
+
+═══════════════════════════════════════
+IL TUO COMPITO
+═══════════════════════════════════════
+
+Devi raffinare il modello OR-Tools per migliorare la fairness della schedulazione.
+Per farlo, aggiungi i seguenti DUE vincoli hard al metodo `build_base_constraints()`
+(o in un punto equivalente del modello, PRIMA della chiamata al solver):
+
+1. VINCOLO FAIRNESS SUL LAVORATORE SVANTAGGIATO:
+   Il satisfaction_score del Worker {most_disadvantaged_worker_id} nel nuovo schedule
+   deve essere STRETTAMENTE MAGGIORE di {current_min_score}.
+
+   Implementazione: calcola la somma pesata
+       score_w = Σ satisfaction_weights[(w, d, s)] * shifts[(w, d, s)]
+   per w = {most_disadvantaged_worker_id}, e aggiungi:
+       model.Add(score_w >= {current_min_score + 1})
+
+2. VINCOLO DI NON-PEGGIORAMENTO PER TUTTI GLI ALTRI LAVORATORI:
+   Il satisfaction_score di OGNI altro lavoratore deve rimanere >= {current_min_score}
+   (il minimo attuale), in modo che il miglioramento del lavoratore svantaggiato
+   non venga ottenuto a spese degli altri.
+
+   Implementazione: per ogni w != {most_disadvantaged_worker_id}, calcola score_w
+   e aggiungi:
+       model.Add(score_w >= {current_min_score})
+
+═══════════════════════════════════════
+REGOLE CRITICHE
+═══════════════════════════════════════
+
+- NON modificare la matrice satisfaction_weights. I pesi devono restare identici.
+- NON rimuovere o alterare i vincoli preesistenti (hard constraints legali).
+- NON modificare la struttura della classe (metodi, __init__, apply_preferences, ecc.).
+- Il marcatore `# <<< PREFERENCES_INJECTION_POINT >>>` DEVE restare intatto.
+- Il solver troverà autonomamente una nuova assegnazione dei turni che soddisfa
+  i nuovi vincoli di fairness mantenendo tutti i vincoli legali.
+
+═══════════════════════════════════════
+CODICE CORRENTE DEL MODELLO
+═══════════════════════════════════════
+
+{current_code}
+
+Restituisci ESCLUSIVAMENTE il codice Python aggiornato e completo della classe
+SmartSchedulerModel, pronto per essere eseguito."""
+
+        return prompt

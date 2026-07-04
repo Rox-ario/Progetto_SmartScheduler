@@ -28,9 +28,35 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
 ━━━ 1. __init__(self, num_workers, num_days) ━━━
 - Inizializza `self.model = cp_model.CpModel()`
 - Crea `self.shifts = {}` con variabili booleane `new_bool_var` per ogni (w, d, s)
-- Crea `self.satisfaction_weights = {}` inizializzato a 0 per ogni (w, d, s)
 - Definisce `self.shift_durations` e `self.shift_weights` come dizionari
 - Per la "rolling 7-day window" usa: `for d in range(self.num_days - 6):`
+- Crea `self.satisfaction_weights = {}` con pre-inizializzazione "Universal Base Hardship".
+  NON inizializzare tutto a 0. I turni oggettivamente faticosi devono avere un malus
+  di default per permettere al solver di distribuirli equamente e per rendere
+  la Fase 4 (refinement di fairness) efficace anche per i lavoratori senza preferenze.
+
+  Codice OBBLIGATORIO per l'inizializzazione dei pesi:
+
+      holidays = {1, 17, 18, 25, 30}  # 8 dic, 24 dic, 25 dic, 1 gen, 6 gen
+      for w in range(self.num_workers):
+          for d in range(self.num_days):
+              is_weekend = (d % 7 == 5 or d % 7 == 6)
+              is_holiday = d in holidays
+              for s in range(3):
+                  is_night = (s == 2)
+                  weight = 0
+                  if is_night:
+                      weight -= 2
+                  if is_weekend or is_holiday:
+                      weight -= 1
+                  self.satisfaction_weights[(w, d, s)] = weight
+
+  In questo modo:
+  - Turno diurno feriale      → peso  0 (neutro)
+  - Turno diurno weekend/fest → peso -1 (lievemente svantaggiato)
+  - Turno notturno feriale    → peso -2 (svantaggiato)
+  - Turno notturno weekend    → peso -3 (molto svantaggiato)
+  La Fase 1 (preferenze) potrà sovrascrivere questi valori con +10 o -10.
 
 ━━━ 2. build_base_constraints(self) ━━━
 - Implementa TUTTI gli Hard Constraints definiti nel draft

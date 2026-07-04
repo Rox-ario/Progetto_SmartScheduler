@@ -3,7 +3,7 @@ import importlib.util
 from ortools.sat.python import cp_model # Aggiunto per decodificare lo stato del solver
 from src.system_builder import SystemBuilderAgent
 from src.preferences.translator import PreferenceTranslator
-from src.validation.feedback import FeedbackPromptBuilder # (o il nome del tuo file)
+from src.validation.feedback import FeedbackPromptBuilder, RefinementPromptBuilder
 from src.validation.validation import HardConstraintVerifier, FairnessEvaluationAgent
 
 def print_schedule(schedule_dict, num_days=31):
@@ -32,6 +32,49 @@ def load_dynamic_model(model_output_path):
     spec.loader.exec_module(module)
     return module.SmartSchedulerModel
 
+def extract_schedule(solver, scheduler, num_workers, num_days=31):
+    """Estrae il dizionario schedule dal solver risolto."""
+    schedule_dict = {}
+    for d in range(num_days):
+        schedule_dict[d] = {}
+        for s in range(3):
+            assigned_workers = []
+            for w in range(num_workers):
+                if solver.Value(scheduler.shifts[(w, d, s)]) == 1:
+                    assigned_workers.append(w)
+            schedule_dict[d][s] = assigned_workers
+    return schedule_dict
+
+def extract_preferences(scheduler, num_workers):
+    """Estrae le preferenze positive/negative dalla matrice satisfaction_weights."""
+    extracted_preferences = {w: {'positive': [], 'negative': []} for w in range(num_workers)}
+    for (w, d, s), weight in scheduler.satisfaction_weights.items():
+        if weight > 0:
+            extracted_preferences[w]['positive'].append((d, s))
+        elif weight < 0:
+            extracted_preferences[w]['negative'].append((d, s))
+    return extracted_preferences
+
+def build_and_solve(model_output_path, num_workers):
+    """
+    Carica dinamicamente il modello, inietta le preferenze, costruisce e risolve.
+    Restituisce (status, solver, scheduler) oppure (None, None, None) in caso di errore.
+    """
+    try:
+        SmartSchedulerModel = load_dynamic_model(model_output_path)
+        scheduler = SmartSchedulerModel(num_workers=num_workers, num_days=31)
+
+        scheduler.build_base_constraints()
+        scheduler.apply_preferences()
+        scheduler.build_objective()
+
+        status, solver = scheduler.solve()
+        return status, solver, scheduler
+    except Exception as e:
+        print(f"[-] Errore durante la costruzione/risoluzione del modello: {e}")
+        return None, None, None
+
+
 def main():
     draft_path = os.path.join("data", "model_draft.txt")
     preferences_path = os.path.join("data", "preferences.txt")
@@ -44,13 +87,18 @@ def main():
     builder_agent = SystemBuilderAgent()
     translator = PreferenceTranslator()
 
-    # Parametri del ciclo di Feedback
+    # Parametri del ciclo di Feedback (Fasi 0-3)
     MAX_RETRIES = 10
     attempt = 1
     is_schedule_valid = False
     feedback_prompt = None
     num_workers=13
+    schedule_dict = {}
+    scheduler = None
 
+    # ═══════════════════════════════════════════════════════
+    # CICLO FASI 0-3: Generazione e Validazione Hard Constraints
+    # ═══════════════════════════════════════════════════════
     while attempt <= MAX_RETRIES and not is_schedule_valid:
         print(f"\n>>> INIZIO ITERAZIONE {attempt}/{MAX_RETRIES} <<<")
 
@@ -72,30 +120,20 @@ def main():
 
         # ── FASE 2: Schedule Drafting ──────────────────────────
         print("[FASE 2] Costruzione e risoluzione del modello...")
-        SmartSchedulerModel = load_dynamic_model(model_output_path)
-        scheduler = SmartSchedulerModel(num_workers=num_workers, num_days=31)
+        status, solver, scheduler = build_and_solve(model_output_path, num_workers)
 
-        scheduler.build_base_constraints()
-        scheduler.apply_preferences()
-        scheduler.build_objective()
-
-        status, solver = scheduler.solve()
+        if status is None:
+            feedback_prompt = "Il modello ha generato un errore Python durante l'esecuzione. Rivedi la sintassi e la struttura del codice."
+            attempt += 1
+            continue
 
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             print("[+] Soluzione matematica trovata. Passaggio alla validazione simbolica...")
 
             # ── ESTRAZIONE DIZIONARIO PER IL VERIFICATORE ──
-            schedule_dict = {}
-            for d in range(31):
-                schedule_dict[d] = {}
-                for s in range(3):
-                    assigned_workers = []
-                    for w in range(num_workers):
-                        if solver.Value(scheduler.shifts[(w, d, s)]) == 1:
-                            assigned_workers.append(w)
-                    schedule_dict[d][s] = assigned_workers
-
+            schedule_dict = extract_schedule(solver, scheduler, num_workers)
             print_schedule(schedule_dict, num_days=31)
+
             # ── FASE 3: Schedule Verification ─────────────────
             print("[FASE 3] Esecuzione Hard Constraint Verifier...")
             verifier = HardConstraintVerifier(schedule_dict, num_workers=num_workers, num_days=31)
@@ -104,27 +142,6 @@ def main():
             if is_valid:
                 print("\n[+] SUCCESSO! La turnazione rispetta tutti i vincoli legali.")
                 is_schedule_valid = True
-
-                #estraiamo le preferenze
-                extracted_preferences = {w: {'positive': [], 'negative': []} for w in range(num_workers)}
-                for (w, d, s), weight in scheduler.satisfaction_weights.items():
-                    if weight > 0:
-                        extracted_preferences[w]['positive'].append((d, s))
-                    elif weight < 0:
-                        extracted_preferences[w]['negative'].append((d, s))
-
-                # ── FASE 4: Schedule Refinement (Fairness Evaluation) ─────────────────
-                print("\n[FASE 4] Valutazione della Fairness in corso...")
-                fairness_agent = FairnessEvaluationAgent(schedule_dict, num_workers=num_workers, num_days=31, preferences=extracted_preferences)
-                fairness_results = fairness_agent.evaluate_fairness()
-
-                most_disadvantaged = fairness_results['most_disadvantaged_worker_id']
-
-                print("--- RISULTATI FAIRNESS ---")
-                print(f"Media turni disagiati: {fairness_results['mean_disadvantaged_shifts']}")
-                print(f"Deviazione Standard: {fairness_results['standard_deviation']}")
-                print(f"Lavoratore più svantaggiato: Worker {most_disadvantaged}")
-                print("--------------------------")
             else:
                 print("\n[-] VALIDAZIONE FALLITA. Generazione prompt di feedback...")
                 feedback_builder = FeedbackPromptBuilder()
@@ -134,20 +151,164 @@ def main():
 
         else:
             print("[-] STATO SOLVER: INFEASIBLE/UNKNOWN. Generazione feedback per rilassare i vincoli...")
-            # Se il solver fallisce, creiamo un feedback generico per l'agente
             feedback_prompt = "Il solver ha restituito INFEASIBLE. Controlla di non aver inserito vincoli matematicamente impossibili da soddisfare insieme. Rivedi il modello."
 
         attempt += 1
 
-    if is_schedule_valid:
-        print("\n==================================================")
-        print("PIPELINE COMPLETATA CON SUCCESSO")
-        print("==================================================")
-        # Qui puoi stampare la turnazione finale se lo desideri
-    else:
+    if not is_schedule_valid:
         print("\n==================================================")
         print("FALLIMENTO: Limite di tentativi raggiunto. Impossibile generare una schedule valida.")
         print("==================================================")
+        return
+
+    # ═══════════════════════════════════════════════════════
+    # FASE 4: Schedule Refinement (Ciclo Iterativo di Fairness)
+    # ═══════════════════════════════════════════════════════
+    print("\n" + "="*60)
+    print("FASE 4: SCHEDULE REFINEMENT - CICLO DI FAIRNESS".center(60))
+    print("="*60)
+
+    MAX_REFINEMENT_ITERATIONS = 10
+    refinement_builder = RefinementPromptBuilder()
+
+    for refinement_iter in range(1, MAX_REFINEMENT_ITERATIONS + 1):
+        print(f"\n{'─'*60}")
+        print(f"  ITERAZIONE REFINEMENT {refinement_iter}/{MAX_REFINEMENT_ITERATIONS}")
+        print(f"{'─'*60}")
+
+        # ── 4.1: Valutazione Fairness (Agente Simbolico) ──
+        extracted_preferences = extract_preferences(scheduler, num_workers)
+        fairness_agent = FairnessEvaluationAgent(
+            schedule_dict,
+            num_workers=num_workers,
+            num_days=31,
+            preferences=extracted_preferences,
+            satisfaction_weights=scheduler.satisfaction_weights
+        )
+        fairness_results = fairness_agent.evaluate_fairness()
+
+        most_disadvantaged = fairness_results['most_disadvantaged_worker_id']
+        satisfaction_scores = fairness_results['satisfaction_scores']
+        current_min_score = fairness_results['min_satisfaction_score']
+
+        print("\n--- RISULTATI FAIRNESS ---")
+        print(f"Media turni disagiati:       {fairness_results['mean_disadvantaged_shifts']}")
+        print(f"Deviazione Standard:         {fairness_results['standard_deviation']}")
+        print(f"Lavoratore più svantaggiato: Worker {most_disadvantaged}")
+        print(f"Suo satisfaction_score:       {current_min_score}")
+        print(f"Satisfaction scores:         {satisfaction_scores}")
+        print("--------------------------")
+
+        # ── 4.2: Lettura del codice corrente del modello ──
+        with open(model_output_path, 'r', encoding='utf-8') as f:
+            current_code = f.read()
+
+        # ── 4.3: Costruzione del prompt di refinement ──
+        refinement_prompt = refinement_builder.build_refinement_prompt(
+            most_disadvantaged_worker_id=most_disadvantaged,
+            current_min_score=current_min_score,
+            satisfaction_scores=satisfaction_scores,
+            current_code=current_code
+        )
+
+        print("[FASE 4] Invio del prompt di refinement al Drafting Agent...")
+
+        # ── 4.4: Il Drafting Agent (LLM) rigenera il codice ──
+        success = builder_agent.generate_model_file(
+            draft_path,
+            model_output_path,
+            feedback_prompt=refinement_prompt
+        )
+
+        if not success:
+            print("[-] Il Drafting Agent non è riuscito a generare il codice raffinato.")
+            print("[*] Si mantiene la schedulazione dell'iterazione precedente.")
+            break
+
+        # ── 4.5: Re-iniezione delle preferenze e risoluzione ──
+        print("[FASE 4] Re-iniezione preferenze e risoluzione del modello raffinato...")
+        translator.process(preferences_path, model_output_path)
+
+        status, solver, scheduler = build_and_solve(model_output_path, num_workers)
+
+        if status is None:
+            print("[-] Errore nell'esecuzione del modello raffinato.")
+            print("[*] Si mantiene la schedulazione dell'iterazione precedente.")
+            break
+
+        # ── 4.6: Controllo risultato solver ──
+        if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            print("\n[*] SOLVER INFEASIBLE: Non è possibile migliorare ulteriormente la fairness")
+            print("    senza violare i vincoli rigidi.")
+            print("    Il ciclo di refinement si conclude. La schedulazione precedente è il risultato finale.")
+            break
+
+        print("[+] Nuova soluzione trovata. Verifica hard constraints...")
+
+        # ── 4.7: Re-verifica hard constraints ──
+        new_schedule_dict = extract_schedule(solver, scheduler, num_workers)
+        verifier = HardConstraintVerifier(new_schedule_dict, num_workers=num_workers, num_days=31)
+        is_valid, validation_result = verifier.verify_all(2)
+
+        if not is_valid:
+            print("[-] La nuova schedulazione viola i vincoli hard! Interruzione del refinement.")
+            print(f"    Violazioni: {validation_result}")
+            print("[*] Si mantiene la schedulazione dell'iterazione precedente.")
+            break
+
+        # ── 4.8: Verifica che la fairness sia effettivamente migliorata ──
+        new_extracted_prefs = extract_preferences(scheduler, num_workers)
+        new_fairness_agent = FairnessEvaluationAgent(
+            new_schedule_dict,
+            num_workers=num_workers,
+            num_days=31,
+            preferences=new_extracted_prefs,
+            satisfaction_weights=scheduler.satisfaction_weights
+        )
+        new_fairness_results = new_fairness_agent.evaluate_fairness()
+        new_min_score = new_fairness_results['min_satisfaction_score']
+
+        print(f"\n[*] Score minimo precedente: {current_min_score}")
+        print(f"[*] Score minimo attuale:    {new_min_score}")
+
+        if new_min_score > current_min_score:
+            print(f"[+] MIGLIORAMENTO CONFERMATO! (+{new_min_score - current_min_score})")
+            # Aggiorniamo la schedulazione corrente
+            schedule_dict = new_schedule_dict
+            print_schedule(schedule_dict, num_days=31)
+        else:
+            print("[*] Nessun miglioramento effettivo. Il ciclo di refinement si conclude.")
+            break
+    else:
+        print(f"\n[*] Raggiunto il limite massimo di {MAX_REFINEMENT_ITERATIONS} iterazioni di refinement.")
+
+    # ═══════════════════════════════════════════════════════
+    # REPORT FINALE
+    # ═══════════════════════════════════════════════════════
+    print("\n" + "="*60)
+    print("PIPELINE COMPLETATA CON SUCCESSO".center(60))
+    print("="*60)
+    print("\nSchedulazione finale:")
+    print_schedule(schedule_dict, num_days=31)
+
+    # Fairness report finale
+    final_prefs = extract_preferences(scheduler, num_workers)
+    final_fairness = FairnessEvaluationAgent(
+        schedule_dict,
+        num_workers=num_workers,
+        num_days=31,
+        preferences=final_prefs,
+        satisfaction_weights=scheduler.satisfaction_weights
+    )
+    final_results = final_fairness.evaluate_fairness()
+
+    print("--- REPORT FAIRNESS FINALE ---")
+    print(f"Media turni disagiati:       {final_results['mean_disadvantaged_shifts']}")
+    print(f"Deviazione Standard:         {final_results['standard_deviation']}")
+    print(f"Lavoratore più svantaggiato: Worker {final_results['most_disadvantaged_worker_id']}")
+    print(f"Min satisfaction_score:       {final_results['min_satisfaction_score']}")
+    print(f"Tutti gli score:             {final_results['satisfaction_scores']}")
+    print("------------------------------")
 
 if __name__ == "__main__":
     main()

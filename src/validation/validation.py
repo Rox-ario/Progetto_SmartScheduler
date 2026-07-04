@@ -93,12 +93,14 @@ class HardConstraintVerifier:
                     )
 
 class FairnessEvaluationAgent:
-    def __init__(self, schedule, num_workers, num_days=31, preferences=None):
+    def __init__(self, schedule, num_workers, num_days=31, preferences=None, satisfaction_weights=None):
         self.schedule = schedule
         self.num_workers = num_workers
         self.num_days = num_days
-        # preferences è un dict: {worker_id: [(day, shift), ...]}
+        # preferences è un dict: {worker_id: {'positive': [(day, shift), ...], 'negative': [...]}}
         self.preferences = preferences if preferences else {}
+        # satisfaction_weights è il dizionario {(w, d, s): int} dal modello OR-Tools
+        self.satisfaction_weights = satisfaction_weights if satisfaction_weights else {}
 
     def _calculate_base_metrics(self):
         """Calcola i turni disagiati e il punteggio preferenze per ogni lavoratore."""
@@ -135,6 +137,29 @@ class FairnessEvaluationAgent:
 
         return metrics
 
+    def _calculate_satisfaction_scores(self):
+        """
+        Calcola il satisfaction_score intero per ogni lavoratore.
+        Usa la stessa formula della funzione obiettivo di OR-Tools:
+            score(w) = Σ satisfaction_weights[(w, d, s)] * assignment(w, d, s)
+        dove assignment vale 1 se il lavoratore w è assegnato al turno (d, s), 0 altrimenti.
+
+        Questo punteggio è direttamente confrontabile tra iterazioni e può essere
+        usato come lower-bound nei vincoli hard della Fase 4 senza problemi di float.
+        """
+        scores = {}
+        for w in range(self.num_workers):
+            total = 0
+            for d in range(self.num_days):
+                for s in range(3):
+                    # Il lavoratore è assegnato a questo turno?
+                    is_assigned = w in self.schedule.get(d, {}).get(s, [])
+                    if is_assigned:
+                        weight = self.satisfaction_weights.get((w, d, s), 0)
+                        total += weight
+            scores[w] = total
+        return scores
+
     def evaluate_fairness(self):
         """Identifica squilibri calcolando media, varianza e deviazione standard."""
         metrics = self._calculate_base_metrics()
@@ -150,25 +175,18 @@ class FairnessEvaluationAgent:
         variance = sum((x - mean_load) ** 2 for x in disadvantaged_loads) / self.num_workers
         std_dev = math.sqrt(variance)
 
-        # Ricerca del "Most Disadvantaged Worker"
-        # Usiamo una formula di penalità: (Turni Disagiati - Media) - (Soddisfazione Preferenze)
-        # Chi ha il punteggio più alto è il più penalizzato dal sistema.
-        max_penalty = -float('inf')
-        most_disadvantaged = None
+        # ── Satisfaction Score (intero, replicabile in OR-Tools) ──
+        satisfaction_scores = self._calculate_satisfaction_scores()
 
-        for w in range(self.num_workers):
-            # Scostamento dalla media (quanto carico extra ha rispetto agli altri)
-            load_deviation = metrics[w]['disadvantaged_shifts'] - mean_load
-            # Sottraiamo il preference_score (se ha avuto turni desiderati, allevia il disagio)
-            penalty_score = load_deviation - metrics[w]['preference_score']
-
-            if penalty_score > max_penalty:
-                max_penalty = penalty_score
-                most_disadvantaged = w
+        # Il lavoratore più svantaggiato è quello con il satisfaction_score più basso
+        min_score = min(satisfaction_scores.values()) if satisfaction_scores else 0
+        most_disadvantaged = min(satisfaction_scores, key=satisfaction_scores.get)
 
         return {
             "mean_disadvantaged_shifts": round(mean_load, 2),
             "standard_deviation": round(std_dev, 2),
             "most_disadvantaged_worker_id": most_disadvantaged,
-            "worker_metrics": metrics
+            "worker_metrics": metrics,
+            "satisfaction_scores": satisfaction_scores,
+            "min_satisfaction_score": min_score
         }
