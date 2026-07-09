@@ -1,3 +1,5 @@
+import ast
+
 from dotenv import load_dotenv
 import os
 import ast
@@ -34,14 +36,9 @@ CONTESTO DEL MODELLO
   - `d`: giorno dell'orizzonte di scheduling (da 0 a 30, dove 0 = 7 dicembre 2026)
   - `s`: turno -> 0 = Mattina (8-14), 1 = Pomeriggio (14-20), 2 = Notte (20-8)
 - Dizionario dei pesi di soddisfazione (soft): `satisfaction_weights[(w, d, s)]`
-  - La matrice viene pre-inizializzata dal sistema con i seguenti pesi di default (Universal Base Hardship):
-    * Turno diurno feriale      →  0  (neutro)
-    * Turno diurno weekend/fest → -1  (lievemente svantaggiato)
-    * Turno notturno feriale    → -2  (svantaggiato)
-    * Turno notturno weekend    → -3  (molto svantaggiato)
-    * Turni in giorni festivi/vacanze generali → -5 (fortemente penalizzato di default)
-  - La funzione obiettivo massimizza la somma di questi pesi per tutti i turni assegnati.
-  - Per garantire la fairness, le preferenze dei singoli lavoratori devono essere ARMONIZZATE e non devono sovrastare i pesi di base del sistema.
+  - Ogni peso è un intero. Un valore ALTO indica che assegnare quel turno è DESIDERATO.
+  - Un valore BASSO (o negativo) indica che quel turno è INDESIDERATO.
+  - La funzione obiettivo massimizza la somma pesata degli shift assegnati.
 - Giorni di weekend nell'orizzonte: [5, 6, 12, 13, 19, 20, 26, 27, 30]
   (corrispondenti a sabati e domeniche dal 7 dicembre al 6 gennaio)
 
@@ -67,8 +64,8 @@ CATEGORIA 2 — SOFT CONSTRAINT (preferenza o desiderio):
   Parole chiave: "preferisce", "vorrebbe evitare", "se possibile", "gradisce",
   "tollera", "non ama", "è disponibile per", "può lavorare durante".
   Codice da generare:
-    - Turno desiderato:    `satisfaction_weights[(w, d, s)] = +1`
-    - Turno indesiderato:  `satisfaction_weights[(w, d, s)] = -2`
+    - Turno desiderato:    `satisfaction_weights[(w, d, s)] = +10`
+    - Turno indesiderato:  `satisfaction_weights[(w, d, s)] = -10`
 
 CATEGORIA 3 — AMBIGUO:
   Condizione: non è possibile classificare con certezza nelle categorie 1 o 2.
@@ -96,48 +93,61 @@ ESEMPI (Few-Shot con Chain-of-Thought)
 ════════════════════════════════════════
 
 --- Esempio 1 ---
+Input: "Il lavoratore 3 non può assolutamente lavorare nel turno di Notte il giorno 15."
+Output:
+# Categoria 1: indisponibilità dichiarata. Giorno 15, turno Notte = s=2.
+model.add(shifts[(3, 15, 2)] == 0)
+
+--- Esempio 2 ---
 Input: "Il lavoratore 0 preferisce i turni di mattina il giorno 2 e il giorno 3."
 Output:
 # Categoria 2: preferenza positiva su turni specifici.
-satisfaction_weights[(0, 2, 0)] = 1
-satisfaction_weights[(0, 3, 0)] = 1
+satisfaction_weights[(0, 2, 0)] = 10
+satisfaction_weights[(0, 3, 0)] = 10
 
---- Esempio 2 ---
+--- Esempio 3 ---
 Input: "Il lavoratore 5 non vuole lavorare nel weekend del primo fine settimana
   (giorni 5 e 6 dell'orizzonte)."
 Output:
 # Categoria 2: preferenza negativa. Non è un divieto assoluto.
-satisfaction_weights[(5, 5, 0)] = -2
-satisfaction_weights[(5, 5, 1)] = -2
-satisfaction_weights[(5, 5, 2)] = -2
-satisfaction_weights[(5, 6, 0)] = -2
-satisfaction_weights[(5, 6, 1)] = -2
-satisfaction_weights[(5, 6, 2)] = -2
+satisfaction_weights[(5, 5, 0)] = -10
+satisfaction_weights[(5, 5, 1)] = -10
+satisfaction_weights[(5, 5, 2)] = -10
+satisfaction_weights[(5, 6, 0)] = -10
+satisfaction_weights[(5, 6, 1)] = -10
+satisfaction_weights[(5, 6, 2)] = -10
 
---- Esempio 3 ---
+--- Esempio 4 ---
+Input: "Il lavoratore 2 ha un impegno personale e non sarà disponibile il giorno 8."
+Output:
+# Categoria 1: indisponibilità dichiarata su tutti i turni del giorno 8.
+for s in range(3):
+    model.add(shifts[(2, 8, s)] == 0)
+
+--- Esempio 5 ---
 Input: "Il lavoratore 1 di solito lavora bene di notte."
 Output:
 # Categoria 3: osservazione esterna, non è né una preferenza né un divieto.
 AMBIGUOUS: preferenza o osservazione non distinguibili dall'input
 
---- Esempio 4 ---
+--- Esempio 6 ---
 Input: "Il lavoratore 1 preferisce i turni di mattina."
 Output:
 # Categoria 2: preferenza positiva estesa a tutti i giorni dell'orizzonte.
 for d in range(31):
-    satisfaction_weights[(1, d, 0)] = 1
+    satisfaction_weights[(1, d, 0)] = 10
 
---- Esempio 5 ---
+--- Esempio 7 ---
 Input: "Il lavoratore 2 è disponibile a lavorare durante i giorni festivi."
 Output:
 # Categoria 2: disponibilità espressa = preferenza positiva, non obbligo.
 # Indici festivi nell'orizzonte: 1 (8 dic), 17 (24 dic), 18 (25 dic), 25 (1 gen), 30 (6 gen).
 for s in range(3):
-    satisfaction_weights[(2, 1, s)] = 1
-    satisfaction_weights[(2, 17, s)] = 1
-    satisfaction_weights[(2, 18, s)] = 1
-    satisfaction_weights[(2, 25, s)] = 1
-    satisfaction_weights[(2, 30, s)] = 1
+    satisfaction_weights[(2, 1, s)] = 10
+    satisfaction_weights[(2, 17, s)] = 10
+    satisfaction_weights[(2, 18, s)] = 10
+    satisfaction_weights[(2, 25, s)] = 10
+    satisfaction_weights[(2, 30, s)] = 10
 
 ════════════════════════════════════════
 ORA TRADUCI LA SEGUENTE RICHIESTA

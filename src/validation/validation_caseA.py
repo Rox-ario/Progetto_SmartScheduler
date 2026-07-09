@@ -29,11 +29,11 @@ class HardConstraintVerifier:
             worker_shifts[w].sort(key=lambda x: (x[0], x[1]))
         return worker_shifts
 
-    def verify_all(self):
+    def verify_all(self, min_workers_per_shift):
         worker_shifts = self._get_worker_shifts()
         self._check_shift_rules(worker_shifts)
         self._check_legal_work_limits(worker_shifts)
-        self._check_staffing_requirements()
+        self._check_staffing_requirements(min_workers_per_shift)
 
         if not self.errors:
             return True, "Tutti i vincoli rigidi (Hard Constraints) sono rispettati."
@@ -78,38 +78,18 @@ class HardConstraintVerifier:
                         f"Worker {w} eccede le 36h ({weekly_hours}h) nella settimana {start_day}-{end_day}."
                     )
 
-    def _check_staffing_requirements(self):
-        """Verifica che ogni turno rispetti la copertura dello Scenario B (HC7).
-        Richiede almeno 1 specializzato (ID 13-19) e un totale di almeno 3 lavoratori.
-        """
+    def _check_staffing_requirements(self, min_workers):
+        """Verifica che ogni turno rispetti la copertura minima richiesta (HC7)."""
         for d in range(self.num_days):
             for s in range(3):
-                # Recupera la lista dei lavoratori assegnati a questo specifico turno
-                workers_in_shift = self.schedule.get(d, {}).get(s, [])
+                workers_in_shift = self.schedule.get(d, {}).get(s, []) # Se 'd' non esiste, restituisce {}; se 's' non esiste, restituisce [].
+                num_workers = len(workers_in_shift)
 
-                # Suddividiamo i presenti in base agli ID dello Scenario B
-                standard_workers = [w for w in workers_in_shift if w < 13]
-                specialized_workers = [w for w in workers_in_shift if w >= 13]
-
-                num_standard = len(standard_workers)
-                num_specialized = len(specialized_workers)
-                num_total = len(workers_in_shift)
-
-                # --- Controllo 1: Presenza obbligatoria dello specializzato ---
-                if num_specialized < 1:
+                # Controllo Under-staffing (copertura minima)
+                if num_workers < min_workers:
                     self.errors.append(
-                        f"Violazione Staffing Scenario B: Giorno {d}, Turno {s} "
-                        f"non ha alcun lavoratore specializzato. Presenti: {workers_in_shift}."
-                    )
-
-                # --- Controllo 2: Copertura minima totale (Minimo 3 pilastri) ---
-                # Se num_total < 3 e num_specialized >= 1, significa che abbiamo ad esempio
-                # 1 specializzato e solo 1 standard (totale 2), violando il minimo di standard.
-                # Se invece abbiamo 1 standard e 2 specializzati, il totale è 3 ed è VALIDO.
-                if num_total < 3:
-                    self.errors.append(
-                        f"Violazione Staffing Scenario B (Under-staffing): Giorno {d}, Turno {s} "
-                        f"ha solo {num_total} lavoratori (minimo richiesto: 3). Presenti: {workers_in_shift}."
+                        f"Violazione Staffing (Under-staffing): Giorno {d}, Turno {s} "
+                        f"ha {num_workers} lavoratori (minimo: {min_workers})."
                     )
 
 class FairnessEvaluationAgent:

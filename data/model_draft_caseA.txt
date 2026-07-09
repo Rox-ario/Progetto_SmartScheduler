@@ -1,0 +1,44 @@
+[1. SCHEDULING HORIZON]
+- Start Date: 7th December 2026
+- End Date: 6th January 2027
+- Total Days: 31 days (Index 0 to 30)
+- Holidays: 24th and 25th December 2026 (Christmas Day) (index 17 and 18), 1st January 2027 (New Year's Day) (index 25), 6th January 2027 (Epiphany) (index 30), 8th December 2026 (index 1) (Immaculate Conception)
+
+[2. AVAILABLE WORKERS]
+- Total Workers (N): 13
+- Worker IDs: 0 to N-1
+
+[3. AVAILABLE SHIFTS PER DAY]
+Each day includes three shifts. The 'workload/shift weight' is based on duration:
+- Shift 0 (Morning): 08:00 - 14:00 (Duration: 6h, Shift Weight: 1)
+- Shift 1 (Afternoon): 14:00 - 20:00 (Duration: 6h, Shift Weight: 1)
+- Shift 2 (Night): 20:00 - 08:00 (Duration: 12h, Shift Weight: 2)
+
+[4. HARD CONSTRAINTS (LEGAL & SCHEDULING REQUIREMENTS)]
+
+HC1_MAX_HOURS_PER_WEEK:
+- Description: Each employee's working time cannot exceed 36 hours per week.
+- Logic: In any rolling 7-day window, the sum of hours worked (6 for Morning/Afternoon, 12 for Night) by a single worker must be <= 36.
+
+- Description: Each worker must cover exactly 25 shifts in a month.
+- Logic: The sum of "Shift Weights" (Morning=1, Afternoon=1, Night=2) for each worker across the 31-day horizon must be exactly equal to 25.
+
+HC3_NIGHT_SHIFT_REST:
+- Description: It is mandatory to ensure each employee two free days after each night shift.
+- Logic: If a worker is assigned Shift 2 (Night) on Day D, they must have 0 shifts assigned on Day D+1 and Day D+2.
+
+HC4_MAX_ONE_SHIFT_PER_DAY:
+- Description: Each worker can cover up to one shift per day.
+- Logic: The sum of boolean assignments for Shift 0, 1, and 2 for a specific worker on a specific day must be <= 1.
+
+HC5_NO_SUBSEQUENT_SHIFTS:
+- Description: A worker cannot cover two subsequent shifts.
+- Logic: Prevents back-to-back shift assignments. Specifically, a worker cannot do Shift 1 (Afternoon) on Day D and Shift 0 (Morning) on Day D+1. (Note: Night shift transitions are already covered and restricted by HC3).
+
+HC6_MANDATORY_WEEKLY_REST:
+- Description: Each worker must be ensured a day of rest.
+- Logic: In any consecutive 7-day block, every worker must have at least one completely free day (0 shifts assigned). Workers can express preferences on WHICH day this should be via Soft Constraints.
+
+HC7_NO_EMPTY_SHIFTS:
+- Description: Each shift must be covered by at least two workers.
+- Logic: For each shift on each day, the sum of boolean assignments across all workers must be >= 2.

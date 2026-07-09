@@ -92,7 +92,7 @@ def main():
     attempt = 1
     is_schedule_valid = False
     feedback_prompt = None
-    num_workers=20
+    num_workers=13
     schedule_dict = {}
     scheduler = None
 
@@ -137,7 +137,7 @@ def main():
             # ── FASE 3: Schedule Verification ─────────────────
             print("[FASE 3] Esecuzione Hard Constraint Verifier...")
             verifier = HardConstraintVerifier(schedule_dict, num_workers=num_workers, num_days=31)
-            is_valid, validation_result = verifier.verify_all()
+            is_valid, validation_result = verifier.verify_all(2)
 
             if is_valid:
                 print("\n[+] SUCCESSO! La turnazione rispetta tutti i vincoli legali.")
@@ -248,7 +248,7 @@ def main():
         # ── 4.7: Re-verifica hard constraints ──
         new_schedule_dict = extract_schedule(solver, scheduler, num_workers)
         verifier = HardConstraintVerifier(new_schedule_dict, num_workers=num_workers, num_days=31)
-        is_valid, validation_result = verifier.verify_all()
+        is_valid, validation_result = verifier.verify_all(2)
 
         if not is_valid:
             print("[-] La nuova schedulazione viola i vincoli hard! Interruzione del refinement.")
