@@ -4,7 +4,7 @@ from ortools.sat.python import cp_model # Aggiunto per decodificare lo stato del
 from src.system_builder import SystemBuilderAgent
 from src.preferences.translator import PreferenceTranslator
 from src.validation.feedback import FeedbackPromptBuilder, RefinementPromptBuilder
-from src.validation.validation import HardConstraintVerifier, FairnessEvaluationAgent
+from src.validation.validation_caseA import HardConstraintVerifier, FairnessEvaluationAgent
 
 def print_schedule(schedule_dict, num_days=31):
     """
@@ -55,10 +55,20 @@ def extract_preferences(scheduler, num_workers):
             extracted_preferences[w]['negative'].append((d, s))
     return extracted_preferences
 
-def build_and_solve(model_output_path, num_workers):
+def build_and_solve(model_output_path, num_workers, fairness_lower_bounds=None, use_maxmin_objective=False):
     """
     Carica dinamicamente il modello, inietta le preferenze, costruisce e risolve.
     Restituisce (status, solver, scheduler) oppure (None, None, None) in caso di errore.
+
+    fairness_lower_bounds: dict opzionale {worker_id: min_score} che forza
+    programmaticamente un lower-bound sul satisfaction_score di ogni worker
+    indicato. Viene applicato DOPO apply_preferences() così i pesi sono definitivi.
+    Questo bypassa l'LLM per la parte numerica critica del refinement.
+
+    use_maxmin_objective: se True, sostituisce l'obiettivo dell'LLM con un
+    obiettivo max-min: massimizza il minimo satisfaction_score tra tutti i
+    lavoratori. Questo spinge il solver a migliorare il worker più svantaggiato
+    il più possibile, non solo di +1.
     """
     try:
         SmartSchedulerModel = load_dynamic_model(model_output_path)
@@ -66,7 +76,36 @@ def build_and_solve(model_output_path, num_workers):
 
         scheduler.build_base_constraints()
         scheduler.apply_preferences()
-        scheduler.build_objective()
+
+        # ── Iniezione programmatica dei lower-bound di fairness ──
+        if fairness_lower_bounds:
+            for w, min_score in fairness_lower_bounds.items():
+                # Usiamo LinearExpr.weighted_sum invece di sum() per garantire
+                # che score_w sia sempre un LinearExpr OR-Tools (mai un int Python),
+                # anche quando tutti i pesi sono 0.
+                score_w = cp_model.LinearExpr.weighted_sum(
+                    [scheduler.shifts[(w, d, s)] for d in range(31) for s in range(3)],
+                    [scheduler.satisfaction_weights.get((w, d, s), 0) for d in range(31) for s in range(3)]
+                )
+                scheduler.model.add(score_w >= min_score)
+                print(f"    [fairness] Worker {w}: score >= {min_score} (iniettato programmaticamente)")
+
+        if use_maxmin_objective:
+            # ── Obiettivo Max-Min Fairness ──
+            # Crea una variabile z = min(score_w per ogni w), poi massimizza z.
+            # Così il solver porta il lavoratore più svantaggiato il più in alto
+            # possibile, invece di limitarsi a soddisfare score >= min+1.
+            z = scheduler.model.new_int_var(-10000, 10000, 'min_satisfaction_score')
+            for w in range(num_workers):
+                score_w = cp_model.LinearExpr.weighted_sum(
+                    [scheduler.shifts[(w, d, s)] for d in range(31) for s in range(3)],
+                    [scheduler.satisfaction_weights.get((w, d, s), 0) for d in range(31) for s in range(3)]
+                )
+                scheduler.model.add(z <= score_w)  # z è sempre <= score di ogni worker
+            scheduler.model.maximize(z)             # massimizza il minimo
+            print("    [objective] Obiettivo max-min fairness attivo.")
+        else:
+            scheduler.build_objective()
 
         status, solver = scheduler.solve()
         return status, solver, scheduler
@@ -76,7 +115,7 @@ def build_and_solve(model_output_path, num_workers):
 
 
 def main():
-    draft_path = os.path.join("data", "model_draft.txt")
+    draft_path = os.path.join("data", "model_draft_caseA.txt")
     preferences_path = os.path.join("data", "preferences.txt")
     model_output_path = os.path.join("src", "scheduler_model.py")
 
@@ -120,7 +159,7 @@ def main():
 
         # ── FASE 2: Schedule Drafting ──────────────────────────
         print("[FASE 2] Costruzione e risoluzione del modello...")
-        status, solver, scheduler = build_and_solve(model_output_path, num_workers)
+        status, solver, scheduler = build_and_solve(model_output_path, num_workers)  # Fase 0-3: senza lower-bound
 
         if status is None:
             feedback_prompt = "Il modello ha generato un errore Python durante l'esecuzione. Rivedi la sintassi e la struttura del codice."
@@ -170,6 +209,19 @@ def main():
 
     MAX_REFINEMENT_ITERATIONS = 10
     refinement_builder = RefinementPromptBuilder()
+
+    # Dizionario che accumula i lower-bound confermati iterazione per iterazione.
+    # La chiave è il worker_id, il valore è il min_score che il solver DEVE superare.
+    # Viene passato a build_and_solve in modo da iniettarlo direttamente nel modello
+    # OR-Tools, senza delegare questo compito all'LLM (che potrebbe ignorarlo).
+    fairness_lower_bounds = {}
+
+    # Riferimento allo scheduler dell'ultima soluzione ACCETTATA come valida.
+    # 'scheduler' viene sovrascritto ad ogni build_and_solve (anche se la soluzione
+    # viene poi rifiutata o restituisce None), quindi non è sicuro usarlo nel report
+    # finale. 'best_scheduler' viene aggiornato solo quando il miglioramento è
+    # confermato, garantendo coerenza con 'schedule_dict'.
+    best_scheduler = scheduler
 
     for refinement_iter in range(1, MAX_REFINEMENT_ITERATIONS + 1):
         print(f"\n{'─'*60}")
@@ -229,7 +281,11 @@ def main():
         print("[FASE 4] Re-iniezione preferenze e risoluzione del modello raffinato...")
         translator.process(preferences_path, model_output_path)
 
-        status, solver, scheduler = build_and_solve(model_output_path, num_workers)
+        status, solver, scheduler = build_and_solve(
+            model_output_path, num_workers,
+            fairness_lower_bounds=fairness_lower_bounds,
+            use_maxmin_objective=True
+        )
 
         if status is None:
             print("[-] Errore nell'esecuzione del modello raffinato.")
@@ -273,9 +329,20 @@ def main():
 
         if new_min_score > current_min_score:
             print(f"[+] MIGLIORAMENTO CONFERMATO! (+{new_min_score - current_min_score})")
-            # Aggiorniamo la schedulazione corrente
+            # Aggiorniamo la schedulazione corrente e il riferimento al best scheduler
             schedule_dict = new_schedule_dict
+            best_scheduler = scheduler  # ← aggiorna solo qui, su soluzione accettata
             print_schedule(schedule_dict, num_days=31)
+
+            # ── Aggiorniamo i lower-bound per la prossima iterazione ──
+            # Per ogni worker forziamo score >= score_attuale (non peggiorare)
+            # e per il worker più svantaggiato score >= new_min_score + 1 (migliorare)
+            for w, score in new_fairness_results['satisfaction_scores'].items():
+                # Il lower-bound è il massimo tra quello già noto e lo score attuale
+                fairness_lower_bounds[w] = max(fairness_lower_bounds.get(w, score), score)
+            # Il worker più svantaggiato deve migliorare ulteriormente la prossima volta
+            fairness_lower_bounds[most_disadvantaged] = new_min_score + 1
+            print(f"    [fairness] Lower-bounds aggiornati: {fairness_lower_bounds}")
         else:
             print("[*] Nessun miglioramento effettivo. Il ciclo di refinement si conclude.")
             break
@@ -291,14 +358,14 @@ def main():
     print("\nSchedulazione finale:")
     print_schedule(schedule_dict, num_days=31)
 
-    # Fairness report finale
-    final_prefs = extract_preferences(scheduler, num_workers)
+    # Fairness report finale — usa best_scheduler (sempre coerente con schedule_dict)
+    final_prefs = extract_preferences(best_scheduler, num_workers)
     final_fairness = FairnessEvaluationAgent(
         schedule_dict,
         num_workers=num_workers,
         num_days=31,
         preferences=final_prefs,
-        satisfaction_weights=scheduler.satisfaction_weights
+        satisfaction_weights=best_scheduler.satisfaction_weights
     )
     final_results = final_fairness.evaluate_fairness()
 
