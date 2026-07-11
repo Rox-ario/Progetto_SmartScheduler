@@ -1,4 +1,0 @@
-Worker 1 prefer morning shifts
-Worker 2 can work during weekends, but not on consecutive holidays
-Worker 3 is available for emergency coverage twice a month
-Worker 4 prefers not to work during holidays
