@@ -260,14 +260,7 @@ if result and result.success:
         dl_col1, dl_col2, dl_col3 = st.columns(3)
 
         df = get_schedule_dataframe(result.schedule_dict)
-        csv_data = df.to_csv(index=False, encoding="utf-8")
-        dl_col1.download_button(
-            "📥 Scarica CSV",
-            data=csv_data,
-            file_name="smartscheduler_calendario.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+
 
         # Excel Download
         try:
@@ -284,19 +277,6 @@ if result and result.success:
             )
         except ImportError:
             dl_col2.info("Installa `openpyxl` per il download Excel.")
-
-        import json
-        json_schedule = {}
-        for d, shifts in result.schedule_dict.items():
-            json_schedule[str(d)] = {str(s): workers for s, workers in shifts.items()}
-        json_data = json.dumps(json_schedule, indent=2, ensure_ascii=False)
-        dl_col3.download_button(
-            "📥 Scarica JSON",
-            data=json_data,
-            file_name="smartscheduler_calendario.json",
-            mime="application/json",
-            use_container_width=True,
-        )
 
     with tab_fairness:
         st.markdown("### 📊 Analisi della Fairness")
@@ -404,9 +384,6 @@ if result and result.success:
         scores_df = pd.DataFrame(scores_data)
         st.dataframe(scores_df, use_container_width=True, hide_index=True)
 
-    # ─────────────────────────────────
-    # TAB 4: Logs
-    # ─────────────────────────────────
     with tab_logs:
         st.markdown("### 📜 Log di Esecuzione")
 
@@ -448,9 +425,6 @@ elif result and not result.success:
                 st.text(f"[{phase}] {msg}")
 
 else:
-    # ═══════════════════════════════════════════════════
-    # WELCOME SCREEN
-    # ═══════════════════════════════════════════════════
 
     # Info banner
     st.markdown(

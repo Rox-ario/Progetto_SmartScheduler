@@ -1,8 +1,3 @@
-"""
-SmartScheduler — Pipeline Runner
-Unified pipeline execution for both Case A and Case B.
-Provides progress callbacks for UI integration.
-"""
 
 import os
 import importlib.util
@@ -16,7 +11,6 @@ from src.validation.feedback import FeedbackPromptBuilder, RefinementPromptBuild
 
 @dataclass
 class PipelineResult:
-    """Structured result from the pipeline execution."""
     success: bool = False
     schedule_dict: dict = field(default_factory=dict)
     fairness_results: dict = field(default_factory=dict)
@@ -32,7 +26,6 @@ class PipelineResult:
 
 
 def _load_dynamic_model(model_output_path):
-    """Carica dinamicamente il modulo Python generato dall'LLM."""
     spec = importlib.util.spec_from_file_location("scheduler_model", model_output_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -40,7 +33,6 @@ def _load_dynamic_model(model_output_path):
 
 
 def _extract_schedule(solver, scheduler, num_workers, num_days=31):
-    """Estrae il dizionario schedule dal solver risolto."""
     schedule_dict = {}
     for d in range(num_days):
         schedule_dict[d] = {}
@@ -54,7 +46,6 @@ def _extract_schedule(solver, scheduler, num_workers, num_days=31):
 
 
 def _extract_preferences(scheduler, num_workers):
-    """Estrae le preferenze positive/negative dalla matrice satisfaction_weights."""
     extracted_preferences = {w: {'positive': [], 'negative': []} for w in range(num_workers)}
     for (w, d, s), weight in scheduler.satisfaction_weights.items():
         if weight > 0:
@@ -65,7 +56,6 @@ def _extract_preferences(scheduler, num_workers):
 
 
 def _build_and_solve(model_output_path, num_workers, fairness_lower_bounds=None, use_maxmin_objective=False):
-    """Costruisce e risolve il modello OR-Tools CP-SAT."""
     try:
         SmartSchedulerModel = _load_dynamic_model(model_output_path)
         scheduler = SmartSchedulerModel(num_workers=num_workers, num_days=31)
@@ -73,7 +63,6 @@ def _build_and_solve(model_output_path, num_workers, fairness_lower_bounds=None,
         scheduler.build_base_constraints()
         scheduler.apply_preferences()
 
-        # Iniezione programmatica dei lower-bound di fairness
         if fairness_lower_bounds:
             for w, min_score in fairness_lower_bounds.items():
                 score_w = cp_model.LinearExpr.weighted_sum(
@@ -83,7 +72,6 @@ def _build_and_solve(model_output_path, num_workers, fairness_lower_bounds=None,
                 scheduler.model.add(score_w >= min_score)
 
         if use_maxmin_objective:
-            # Obiettivo Max-Min Fairness
             z = scheduler.model.new_int_var(-10000, 10000, 'min_satisfaction_score')
             for w in range(num_workers):
                 score_w = cp_model.LinearExpr.weighted_sum(
@@ -103,7 +91,6 @@ def _build_and_solve(model_output_path, num_workers, fairness_lower_bounds=None,
 
 
 def _get_modules(case_type):
-    """Restituisce le classi HardConstraintVerifier e FairnessEvaluationAgent corrette per il case type."""
     if case_type == "A":
         from src.validation.validation_caseA import HardConstraintVerifier, FairnessEvaluationAgent
     else:
@@ -112,20 +99,7 @@ def _get_modules(case_type):
 
 
 def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_callback=None):
-    """
-    Esegue la pipeline completa di SmartScheduler.
 
-    Args:
-        draft_path: Path al file model_draft.txt
-        preferences_path: Path al file preferences.txt
-        num_workers: Numero di lavoratori
-        case_type: "A" (omogeneo) o "B" (eterogeneo)
-        log_callback: function(phase: str, message: str, progress: float)
-                      Chiamata ad ogni step per aggiornare la UI.
-
-    Returns:
-        PipelineResult con tutti i risultati strutturati.
-    """
     model_output_path = os.path.join("src", "scheduler_model.py")
     result = PipelineResult(num_workers=num_workers, case_type=case_type)
 
@@ -151,15 +125,12 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
     schedule_dict = {}
     scheduler = None
 
-    # ═══════════════════════════════════════════════════════
-    # CICLO FASI 0-3: Generazione e Validazione Hard Constraints
-    # ═══════════════════════════════════════════════════════
     log("INIT", f"Avvio pipeline SmartScheduler — Scenario {case_type} con {num_workers} lavoratori", 0.02)
 
     while attempt <= MAX_RETRIES and not is_schedule_valid:
         progress_base = 0.05 + (attempt - 1) / MAX_RETRIES * 0.35
 
-        # ── FASE 0: System Building / Revision ──
+
         if attempt == 1:
             log("FASE 0", "Generazione del modello base tramite LLM...", progress_base)
             success = builder_agent.generate_model_file(draft_path, model_output_path)
@@ -173,23 +144,23 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
             result.total_iterations_building = attempt
             return result
 
-        # ── FASE 1: Preferences Definition ──
+
         log("FASE 1", "Iniezione delle preferenze nel modello...", progress_base + 0.05)
         translator.process(preferences_path, model_output_path)
 
-        # ── FASE 2: Schedule Drafting ──
+
         log("FASE 2", "Risoluzione del modello OR-Tools CP-SAT...", progress_base + 0.10)
         status, solver, scheduler = _build_and_solve(model_output_path, num_workers)
 
         if status is None:
             feedback_prompt = ("Il modello ha generato un errore Python durante l'esecuzione. "
                                "Rivedi la sintassi e la struttura del codice.")
-            log("FASE 2", f"⚠️ Errore nell'esecuzione del modello. Tentativo {attempt}/{MAX_RETRIES}.", progress_base + 0.10)
+            log("FASE 2", f"Errore nell'esecuzione del modello. Tentativo {attempt}/{MAX_RETRIES}.", progress_base + 0.10)
             attempt += 1
             continue
 
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-            log("FASE 2", "✅ Soluzione matematica trovata!", progress_base + 0.12)
+            log("FASE 2", "Soluzione matematica trovata!", progress_base + 0.12)
             schedule_dict = _extract_schedule(solver, scheduler, num_workers)
 
             # ── FASE 3: Schedule Verification ──
@@ -202,15 +173,15 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
                 is_valid, validation_result = verifier.verify_all()
 
             if is_valid:
-                log("FASE 3", "✅ Tutti i vincoli rigidi sono rispettati!", progress_base + 0.17)
+                log("FASE 3", "Tutti i vincoli rigidi sono rispettati!", progress_base + 0.17)
                 is_schedule_valid = True
             else:
                 num_violations = len(validation_result) if isinstance(validation_result, list) else 0
-                log("FASE 3", f"❌ Validazione fallita — {num_violations} violazioni trovate.", progress_base + 0.17)
+                log("FASE 3", f"Validazione fallita — {num_violations} violazioni trovate.", progress_base + 0.17)
                 feedback_builder = FeedbackPromptBuilder()
                 feedback_prompt = feedback_builder.build_revision_prompt(validation_result)
         else:
-            log("FASE 2", "❌ Solver INFEASIBLE — Rilassamento vincoli...", progress_base + 0.12)
+            log("FASE 2", "Solver INFEASIBLE — Rilassamento vincoli...", progress_base + 0.12)
             feedback_prompt = ("Il solver ha restituito INFEASIBLE. Controlla di non aver inserito "
                                "vincoli matematicamente impossibili da soddisfare insieme. Rivedi il modello.")
 
@@ -222,10 +193,6 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
         result.error_message = f"Impossibile generare una schedule valida dopo {MAX_RETRIES} tentativi."
         log("ERRORE", result.error_message, 0.40)
         return result
-
-    # ═══════════════════════════════════════════════════════
-    # FASE 4: Schedule Refinement (Ciclo Iterativo di Fairness)
-    # ═══════════════════════════════════════════════════════
     log("FASE 4", "Avvio ciclo di refinement fairness (max-min)...", 0.45)
 
     MAX_REFINEMENT = 10
@@ -285,7 +252,7 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
         )
 
         if not success:
-            log("FASE 4", "⚠️ LLM non è riuscito a raffinare. Fine refinement.", progress_base + 0.05)
+            log("FASE 4", "LLM non è riuscito a raffinare. Fine refinement.", progress_base + 0.05)
             result.refinement_history[-1]["improved"] = False
             break
 
@@ -300,13 +267,13 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
         )
 
         if status is None:
-            log("FASE 4", "⚠️ Errore nell'esecuzione del modello raffinato. Fine refinement.", progress_base + 0.08)
+            log("FASE 4", "⚠Errore nell'esecuzione del modello raffinato. Fine refinement.", progress_base + 0.08)
             result.refinement_history[-1]["improved"] = False
             break
 
         # 4.6: Controllo risultato solver
         if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-            log("FASE 4", "🏁 Solver INFEASIBLE — Fairness al massimo possibile.", progress_base + 0.08)
+            log("FASE 4", "Solver INFEASIBLE — Fairness al massimo possibile.", progress_base + 0.08)
             result.refinement_history[-1]["improved"] = False
             break
 
@@ -319,7 +286,7 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
             is_valid, _ = verifier.verify_all()
 
         if not is_valid:
-            log("FASE 4", "❌ Nuova schedulazione viola vincoli hard. Fine refinement.", progress_base + 0.10)
+            log("FASE 4", "Nuova schedulazione viola vincoli hard. Fine refinement.", progress_base + 0.10)
             result.refinement_history[-1]["improved"] = False
             break
 
@@ -337,7 +304,7 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
 
         if new_min_score > current_min_score:
             log("FASE 4",
-                f"✅ Miglioramento confermato! {current_min_score} → {new_min_score} (+{new_min_score - current_min_score})",
+                f"Miglioramento confermato! {current_min_score} → {new_min_score} (+{new_min_score - current_min_score})",
                 progress_base + 0.12)
             schedule_dict = new_schedule_dict
             best_scheduler = scheduler
@@ -347,7 +314,7 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
                 fairness_lower_bounds[w] = max(fairness_lower_bounds.get(w, score), score)
             fairness_lower_bounds[most_disadvantaged] = new_min_score + 1
         else:
-            log("FASE 4", "🏁 Nessun miglioramento effettivo. Fine refinement.", progress_base + 0.12)
+            log("FASE 4", "Nessun miglioramento effettivo. Fine refinement.", progress_base + 0.12)
             result.refinement_history[-1]["improved"] = False
             break
 
@@ -373,6 +340,6 @@ def run_pipeline(draft_path, preferences_path, num_workers, case_type="B", log_c
     result.fairness_results = final_results
     result.satisfaction_weights = dict(best_scheduler.satisfaction_weights)
 
-    log("FINE", "✅ Pipeline completata con successo!", 1.0)
+    log("FINE", "Pipeline completata con successo!", 1.0)
 
     return result
