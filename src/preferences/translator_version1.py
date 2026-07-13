@@ -157,16 +157,6 @@ Output:"""
 
 
     def _extract_python_code(self, raw_output: str) -> str:
-            """
-            Estrae solo il codice Python valido da un output LLM potenzialmente sporco.
-
-            Strategia a tre strati:
-            1. Cerca blocchi delimitati da ```python ... ``` (caso markdown)
-            2. Salta righe di testo naturale, tienendo solo righe Python-valide
-            3. Verifica la sintassi dell'intero blocco estratto con ast.parse()
-            """
-
-            # Strato 1: rimozione blocchi markdown
             markdown_pattern = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
             match = markdown_pattern.search(raw_output)
             if match:
@@ -174,16 +164,6 @@ Output:"""
                 if self._is_valid_python(candidate):
                     return candidate
 
-            # Strato 2: filtro riga per riga
-            # Strategia a priorità decrescente:
-            #   1. Righe vuote → sempre tenute
-            #   2. Righe indentate → quasi certamente corpo di un blocco Python
-            #   3. Righe che iniziano con keyword/pattern Python noti → tenute
-            #   4. Fallback sintattico: ast.parse() sulla singola riga —
-            #      qualunque cosa Python consideri valida (incluse assegnazioni
-            #      a variabili arbitrarie come `weekend_pairs = [...]`) viene
-            #      tenuta senza bisogno di aggiorare la whitelist.
-            #   5. Tutto il resto è linguaggio naturale → scartato
 
             PYTHON_STARTERS = (
                 # keyword e strutture
@@ -200,61 +180,43 @@ Output:"""
             for line in raw_output.splitlines():
                 stripped = line.strip()
 
-                # 1. Righe vuote: le teniamo (separano blocchi logici)
                 if not stripped:
                     clean_lines.append(line)
                     continue
 
-                # 2. Righe indentate: quasi certamente corpo di un blocco Python
                 if line.startswith(("    ", "\t")):
                     clean_lines.append(line)
                     continue
 
-                # 3. Righe che iniziano con pattern Python noti
                 if any(stripped.startswith(p) for p in PYTHON_STARTERS):
                     clean_lines.append(line)
                     continue
 
-                # 4. Fallback sintattico: proviamo ast.parse() sulla singola riga.
-                #    Questo cattura assegnazioni libere (es. `weekend_pairs = [...]`)
-                #    e qualsiasi altra costruzione Python non coperta dalla whitelist.
                 if self._is_valid_python(stripped):
                     clean_lines.append(line)
                     continue
 
-                # 5. Scarta tutto il resto (linguaggio naturale, etichette tipo "Ragionamento:")
                 print(f"    [parser] Riga scartata (non-Python): {stripped[:60]}")
 
             candidate = "\n".join(clean_lines).strip()
 
-            # Strato 3: verifica sintattica finale
             if not candidate:
                 return "AMBIGUOUS: output LLM vuoto dopo il parsing"
 
             if self._is_valid_python(candidate):
                 return candidate
 
-            # Se la sintassi non è valida, segnala l'errore
             return f"AMBIGUOUS: codice estratto non è Python valido - {candidate[:100]}"
 
 
     def _is_valid_python(self, code: str) -> bool:
-        """Verifica sintattica tramite AST. Non esegue mai il codice."""
         try:
             ast.parse(code)
             return True
         except SyntaxError:
             return False
-    # ─────────────────────────────────────────────
-    # LETTURA FILE
-    # ─────────────────────────────────────────────
 
     def _read_preferences_file(self, file_path: str) -> list[str]:
-        """
-        Legge il file delle preferenze e restituisce una lista di righe
-        non vuote e non commentate (righe che iniziano con #).
-        Ogni riga è trattata come una preferenza indipendente.
-        """
         if not os.path.exists(file_path):
             raise FileNotFoundError(
                 f"File preferenze non trovato: '{file_path}'"
@@ -266,7 +228,6 @@ Output:"""
         preferences = []
         for line in lines:
             stripped = line.strip()
-            # Salta righe vuote e commenti
             if stripped and not stripped.startswith("#"):
                 preferences.append(stripped)
 
@@ -277,15 +238,7 @@ Output:"""
 
         return preferences
 
-    # ─────────────────────────────────────────────
-    # TRADUZIONE SINGOLA PREFERENZA
-    # ─────────────────────────────────────────────
-
     def translate_preference(self, user_input: str) -> str:
-        """
-        Invia una singola preferenza a Gemini e restituisce
-        il codice Python estratto in modo sicuro.
-        """
         user_prompt = f"Input: {user_input}"
 
         config = types.GenerateContentConfig(
@@ -301,8 +254,6 @@ Output:"""
                 config=config,
             )
             raw_output = response.text.strip()
-
-            # Gestione AMBIGUOUS esplicita (prima di qualsiasi altra cosa)
             if raw_output.startswith("AMBIGUOUS:"):
                 return raw_output
 
@@ -312,20 +263,11 @@ Output:"""
         except Exception as e:
             return f"AMBIGUOUS: Errore API Gemini - {str(e)}"
 
-    # ─────────────────────────────────────────────
-    # INIEZIONE NEL FILE SCHEDULER
-    # ─────────────────────────────────────────────
-
     def _inject_into_scheduler(
             self,
             scheduler_path: str,
             code_block: str,
     ) -> None:
-        """
-        Legge scheduler_model.py, individua il marcatore di iniezione,
-        e inserisce il codice generato subito sotto di esso.
-        Crea un backup (.bak) prima di modificare il file.
-        """
         if not os.path.exists(scheduler_path):
             raise FileNotFoundError(
                 f"File scheduler non trovato: '{scheduler_path}'"
@@ -340,15 +282,9 @@ Output:"""
                 f"in '{scheduler_path}'.\n"
                 "Aggiungi manualmente quella riga nel punto corretto del file."
             )
-
-        # Backup prima di toccare qualsiasi cosa
         backup_path = scheduler_path + ".bak"
         shutil.copy2(scheduler_path, backup_path)
         print(f"  [backup] Creato '{backup_path}'")
-
-        # Il marcatore si trova dentro apply_preferences() → 8 spazi fissi.
-        # Questo è il contratto con il LLM: NON cambiare questo valore
-        # se non cambi anche la posizione del marcatore nello scheduler.
         INDENT = " " * 8
         indented_code = "\n".join(
             (INDENT + line if line.strip() else line)
@@ -363,35 +299,18 @@ Output:"""
         with open(scheduler_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-    # ─────────────────────────────────────────────
-    # ENTRY POINT PRINCIPALE
-    # ─────────────────────────────────────────────
-
     def process(
             self,
             preferences_path: str,
             scheduler_path: str,
     ) -> None:
-        """
-        Pipeline completa:
-          1. Legge le preferenze dal file di testo
-          2. Traduce ciascuna preferenza con Gemini
-          3. Inietta il codice valido nel file scheduler
-          4. Stampa un report finale
-
-        Le righe AMBIGUOUS non vengono iniettate ma vengono segnalate.
-        """
         print(f"\n{'='*60}")
         print(f"  SmartScheduler — Fase 1: Preferences Definition")
         print(f"{'='*60}")
         print(f"  Preferenze:  {preferences_path}")
         print(f"  Scheduler:   {scheduler_path}\n")
-
-        # Step 1 — lettura
         preferences = self._read_preferences_file(preferences_path)
         print(f"  {len(preferences)} preferenza/e trovata/e.\n")
-
-        # Step 2 — traduzione
         valid_snippets = []
         ambiguous_items = []
 
@@ -404,11 +323,9 @@ Output:"""
                 ambiguous_items.append((pref, result))
             else:
                 print(f"    [OK]  Codice generato ({len(result.splitlines())} righe)")
-                # Aggiunge un commento di provenienza per leggibilità nel file finale
                 snippet = f"# Preferenza: {pref}\n{result}"
                 valid_snippets.append(snippet)
 
-        # Step 3 — iniezione
         if valid_snippets:
             full_code_block = "\n\n".join(valid_snippets)
             print(f"\n  Iniezione di {len(valid_snippets)} blocco/i in '{scheduler_path}'...")
@@ -417,7 +334,6 @@ Output:"""
         else:
             print("\n  Nessun codice valido da iniettare.")
 
-        # Step 4 — report
         print(f"\n{'-'*60}")
         print(f"  REPORT FINALE")
         print(f"  Preferenze tradotte:  {len(valid_snippets)}")
@@ -431,10 +347,6 @@ Output:"""
 
         print(f"{'='*60}\n")
 
-
-# ─────────────────────────────────────────────
-# USO DA RIGA DI COMANDO
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse

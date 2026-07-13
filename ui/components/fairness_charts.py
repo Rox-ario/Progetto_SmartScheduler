@@ -1,7 +1,4 @@
-"""
-SmartScheduler — Fairness Charts Component
-Grafici interattivi Plotly per la valutazione della fairness.
-"""
+
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -9,7 +6,6 @@ import streamlit as st
 import math
 
 
-# ── Palette coerente con il tema ──
 COLORS = {
     "violet": "#7c3aed",
     "violet_light": "#a78bfa",
@@ -34,19 +30,12 @@ PLOTLY_LAYOUT_DEFAULTS = dict(
 
 
 def render_satisfaction_bar_chart(satisfaction_scores, most_disadvantaged_id):
-    """
-    Bar chart dei satisfaction_score per ogni lavoratore.
-    Evidenzia il lavoratore più svantaggiato in rosso.
 
-    Args:
-        satisfaction_scores: dict {worker_id: int_score}
-        most_disadvantaged_id: ID del worker con il punteggio più basso
-    """
     workers = sorted(satisfaction_scores.keys())
     scores = [satisfaction_scores[w] for w in workers]
     labels = [f"W{w}" for w in workers]
 
-    # Colori: viola per tutti, rosso per il più svantaggiato
+
     bar_colors = []
     for w in workers:
         if w == most_disadvantaged_id:
@@ -71,7 +60,6 @@ def render_satisfaction_bar_chart(satisfaction_scores, most_disadvantaged_id):
         )
     ])
 
-    # Linea media
     if scores:
         avg_score = sum(scores) / len(scores)
         fig.add_hline(
@@ -111,15 +99,6 @@ def render_satisfaction_bar_chart(satisfaction_scores, most_disadvantaged_id):
 
 
 def render_fairness_radar_chart(worker_metrics, num_workers):
-    """
-    Radar chart della distribuzione dei turni disagiati per lavoratore.
-    Mostra l'equilibrio/squilibrio visivo tra i lavoratori.
-
-    Args:
-        worker_metrics: dict {worker_id: {"disadvantaged_shifts": float, "preference_score": float}}
-        num_workers: Numero totale di lavoratori
-    """
-    # Per radar chart con molti workers, mostra solo i top/bottom
     workers = sorted(worker_metrics.keys())
     categories = [f"W{w}" for w in workers]
     disadvantaged = [worker_metrics[w]["disadvantaged_shifts"] for w in workers]
@@ -127,9 +106,8 @@ def render_fairness_radar_chart(worker_metrics, num_workers):
 
     fig = go.Figure()
 
-    # Trace 1: Turni disagiati (area viola)
     fig.add_trace(go.Scatterpolar(
-        r=disadvantaged + [disadvantaged[0]],  # Chiudi il poligono
+        r=disadvantaged + [disadvantaged[0]],
         theta=categories + [categories[0]],
         fill='toself',
         fillcolor='rgba(124, 58, 237, 0.15)',
@@ -138,7 +116,6 @@ def render_fairness_radar_chart(worker_metrics, num_workers):
         hovertemplate="<b>%{theta}</b><br>Turni disagiati: %{r:.1f}<extra></extra>",
     ))
 
-    # Trace 2: Preferenze soddisfatte (area ciano)
     fig.add_trace(go.Scatterpolar(
         r=preference + [preference[0]],
         theta=categories + [categories[0]],
@@ -183,20 +160,7 @@ def render_fairness_radar_chart(worker_metrics, num_workers):
 
 
 def render_refinement_line_chart(refinement_history):
-    """
-    Line chart dell'evoluzione del min_satisfaction_score durante le iterazioni di refinement.
-    Mostra il progresso del ciclo di fairness.
 
-    Args:
-        refinement_history: list of dicts con chiavi:
-            - iteration: int
-            - min_score: int
-            - most_disadvantaged: int
-            - scores: dict {worker_id: int}
-            - std_dev: float
-            - mean_load: float
-            - improved: bool
-    """
     if not refinement_history:
         st.info("Nessuna iterazione di refinement disponibile.")
         return
@@ -208,7 +172,6 @@ def render_refinement_line_chart(refinement_history):
 
     fig = go.Figure()
 
-    # Trace 1: Min satisfaction score (linea principale)
     fig.add_trace(go.Scatter(
         x=iterations,
         y=min_scores,
@@ -228,7 +191,7 @@ def render_refinement_line_chart(refinement_history):
         ),
     ))
 
-    # Trace 2: Deviazione standard (asse Y secondario)
+
     fig.add_trace(go.Scatter(
         x=iterations,
         y=std_devs,
@@ -244,10 +207,8 @@ def render_refinement_line_chart(refinement_history):
         ),
     ))
 
-    # Crea una copia sicura dei default per non mutare la costante globale
     layout_settings = PLOTLY_LAYOUT_DEFAULTS.copy()
 
-    # Definiamo le impostazioni specifiche per questo grafico (le 34 righe mancanti)
     specific_settings = dict(
         title=dict(
             text="Andamento Ottimizzazione Fairness",
@@ -278,33 +239,23 @@ def render_refinement_line_chart(refinement_history):
             xanchor="center",
             x=0.5,
         ),
-        margin=dict(l=60, r=40, t=60, b=80),  # Questo ora sovrascriverà correttamente il default
+        margin=dict(l=60, r=40, t=60, b=80),
         height=400,
     )
 
-    # Uniamo i due dizionari. Le chiavi di specific_settings avranno la precedenza
     layout_settings.update(specific_settings)
 
-    # Passiamo il dizionario unificato alla funzione
     fig.update_layout(**layout_settings)
 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 def render_scores_comparison_chart(satisfaction_scores, num_workers):
-    """
-    Horizontal bar chart ordinato per score, utile per visualizzare
-    rapidamente la distribuzione dei punteggi.
 
-    Args:
-        satisfaction_scores: dict {worker_id: int_score}
-        num_workers: Numero totale di lavoratori
-    """
     sorted_workers = sorted(satisfaction_scores.items(), key=lambda x: x[1])
     labels = [f"Worker {w}" for w, _ in sorted_workers]
     scores = [s for _, s in sorted_workers]
 
-    # Gradient di colore dal rosso (peggiore) al verde (migliore)
     min_s = min(scores) if scores else 0
     max_s = max(scores) if scores else 1
     range_s = max_s - min_s if max_s != min_s else 1

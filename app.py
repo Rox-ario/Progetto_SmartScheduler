@@ -54,7 +54,7 @@ if "pipeline_result" not in st.session_state:
 # ═══════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("# 🗓️ SmartScheduler")
-    st.markdown("*Agentic AI Shift Scheduling*")
+    st.markdown("*Multi-Stage AI Scheduling System*")
     st.divider()
 
     # ── Scenario Selection ──
@@ -91,17 +91,17 @@ with st.sidebar:
 
     # ── File Previews ──
     if draft_file:
-        with st.expander("👁️ Anteprima Model Draft", expanded=False):
+        with st.expander("Anteprima Model Draft", expanded=False):
             st.code(draft_file.getvalue().decode("utf-8"), language="text")
 
     if prefs_file:
-        with st.expander("👁️ Anteprima Preferences", expanded=False):
+        with st.expander("Anteprima Preferences", expanded=False):
             st.code(prefs_file.getvalue().decode("utf-8"), language="text")
 
     st.divider()
 
     # ── Time Window Info ──
-    st.markdown("### 🕐 Finestra Temporale")
+    st.markdown("### 🕐 Arco Temporale")
     st.markdown(
         """
         <div style="
@@ -148,14 +148,9 @@ st.markdown(
 )
 
 
-# ═══════════════════════════════════════════════════
-# PIPELINE EXECUTION
-# ═══════════════════════════════════════════════════
 if run_button and can_run:
-    # Reset dei risultati precedenti
     st.session_state.pipeline_result = None
 
-    # Salva i file uploadati nella directory data/
     data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     os.makedirs(data_dir, exist_ok=True)
 
@@ -172,19 +167,16 @@ if run_button and can_run:
     with open(prefs_path, "wb") as f:
         f.write(prefs_file.getbuffer())
 
-    # ── Esecuzione con progress tracking ──
-    with st.status("🚀 Pipeline in esecuzione...", expanded=True) as status:
+
+    with st.status("Pipeline in esecuzione...", expanded=True) as status:
         progress_bar = st.progress(0.0, text="Inizializzazione...")
         log_placeholder = st.empty()
         accumulated_logs = []
 
         def ui_log_callback(phase, message, progress):
-            """Callback che aggiorna la UI in tempo reale."""
             accumulated_logs.append(f"[{phase}] {message}")
-            # Aggiorna progress bar
             clamped = max(0.0, min(float(progress), 1.0))
             progress_bar.progress(clamped, text=f"**[{phase}]** {message}")
-            # Mostra gli ultimi 25 log nel container
             log_placeholder.code("\n".join(accumulated_logs[-25:]), language="text")
 
         try:
@@ -199,23 +191,20 @@ if run_button and can_run:
             st.session_state.pipeline_result = result
 
             if result.success:
-                progress_bar.progress(1.0, text="✅ Pipeline completata!")
-                status.update(label="✅ Pipeline completata con successo!", state="complete", expanded=False)
+                progress_bar.progress(1.0, text="Pipeline completata!")
+                status.update(label="EVVAI! Pipeline completata con successo!", state="complete", expanded=False)
             else:
                 status.update(
-                    label=f"❌ Pipeline fallita: {result.error_message}",
+                    label=f"OH NO! Pipeline fallita: {result.error_message}",
                     state="error",
                     expanded=True,
                 )
 
         except Exception as e:
-            status.update(label=f"❌ Errore critico: {str(e)}", state="error", expanded=True)
+            status.update(label=f"Errore critico: {str(e)}", state="error", expanded=True)
             st.error(f"**Errore durante l'esecuzione della pipeline:**\n\n`{str(e)}`")
 
 
-# ═══════════════════════════════════════════════════
-# RESULTS DISPLAY
-# ═══════════════════════════════════════════════════
 result = st.session_state.get("pipeline_result")
 
 if result and result.success:
@@ -229,9 +218,6 @@ if result and result.success:
         "📜 Logs",
     ])
 
-    # ─────────────────────────────────
-    # TAB 1: Calendario
-    # ─────────────────────────────────
     with tab_calendar:
         st.markdown("### 📅 Calendario Turni Generato")
 
@@ -268,13 +254,11 @@ if result and result.success:
             else:
                 render_schedule_table(result.schedule_dict)
 
-        # ── Download ──
         st.divider()
         st.markdown("### 📥 Download")
 
         dl_col1, dl_col2, dl_col3 = st.columns(3)
 
-        # CSV Download
         df = get_schedule_dataframe(result.schedule_dict)
         csv_data = df.to_csv(index=False, encoding="utf-8")
         dl_col1.download_button(
@@ -301,9 +285,7 @@ if result and result.success:
         except ImportError:
             dl_col2.info("Installa `openpyxl` per il download Excel.")
 
-        # JSON Download
         import json
-        # Converti le chiavi intere in stringhe per la serializzazione JSON
         json_schedule = {}
         for d, shifts in result.schedule_dict.items():
             json_schedule[str(d)] = {str(s): workers for s, workers in shifts.items()}
@@ -316,15 +298,11 @@ if result and result.success:
             use_container_width=True,
         )
 
-    # ─────────────────────────────────
-    # TAB 2: Fairness
-    # ─────────────────────────────────
     with tab_fairness:
         st.markdown("### 📊 Analisi della Fairness")
 
         fr = result.fairness_results
 
-        # Metriche riassuntive in card
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
         m_col1.metric(
             "Media Turni Disagiati",
@@ -345,7 +323,6 @@ if result and result.success:
 
         st.divider()
 
-        # Grafici
         chart_col1, chart_col2 = st.columns(2)
 
         with chart_col1:
@@ -360,14 +337,9 @@ if result and result.success:
                 result.num_workers,
             )
 
-
-    # ─────────────────────────────────
-    # TAB 3: Report
-    # ─────────────────────────────────
     with tab_report:
         st.markdown("### 📋 Report Completo")
 
-        # Info generali
         info_col1, info_col2 = st.columns(2)
 
         with info_col1:
@@ -404,7 +376,7 @@ if result and result.success:
                     <table style="width:100%; color:#a0a0c0; font-size:0.9rem;">
                         <tr><td>Iterazioni Building</td><td style="text-align:right"><b style="color:#e8e8f4">{result.total_iterations_building}</b></td></tr>
                         <tr><td>Iterazioni Refinement</td><td style="text-align:right"><b style="color:#e8e8f4">{result.total_iterations_refinement}</b></td></tr>
-                        <tr><td>Stato</td><td style="text-align:right"><b style="color:#10b981">✅ Successo</b></td></tr>
+                        <tr><td>Stato</td><td style="text-align:right"><b style="color:#10b981">Successo</b></td></tr>
                         <tr><td>Log entries</td><td style="text-align:right"><b style="color:#e8e8f4">{len(result.logs)}</b></td></tr>
                     </table>
                 </div>
@@ -468,7 +440,7 @@ if result and result.success:
 elif result and not result.success:
     # ── Pipeline fallita ──
     st.divider()
-    st.error(f"### ❌ Pipeline fallita\n\n{result.error_message}")
+    st.error(f"### Pipeline fallita\n\n{result.error_message}")
 
     if result.logs:
         with st.expander("📜 Mostra log di esecuzione", expanded=False):

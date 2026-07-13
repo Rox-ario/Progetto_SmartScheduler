@@ -44,18 +44,19 @@ Devi generare una classe `SmartSchedulerModel` con ESATTAMENTE questi metodi, ne
               is_holiday = d in holidays
               for s in range(3):
                   is_night = (s == 2)
-                  weight = 0
-                  if is_night:
-                      weight -= 2
-                  if is_weekend or is_holiday:
-                      weight -= 1
+                  if is_night and (is_weekend or is_holiday):
+                      weight = -2
+                  elif is_night or is_weekend or is_holiday:
+                      weight = -1
+                  else:
+                      weight = 0
                   self.satisfaction_weights[(w, d, s)] = weight
 
   In questo modo:
   - Turno diurno feriale      → peso  0 (neutro)
-  - Turno diurno weekend/fest → peso -1 (lievemente svantaggiato)
-  - Turno notturno feriale    → peso -2 (svantaggiato)
-  - Turno notturno weekend    → peso -3 (molto svantaggiato)
+  - Turno diurno weekend/fest → peso -1 (svantaggiato)
+  - Turno notturno feriale    → peso -1 (svantaggiato)
+  - Turno notturno weekend    → peso -2 (molto svantaggiato)
   La Fase 1 (preferenze) potrà sovrascrivere questi valori con +10 o -10.
 
 ━━━ 2. build_base_constraints(self) ━━━
@@ -120,10 +121,6 @@ REGOLE DI OUTPUT
 - Se l'indentazione è sbagliata o il marcatore manca, il sistema andrà in crash."""
 
     def generate_model_file(self, draft_filepath: str, output_filepath: str, feedback_prompt: str = None):
-        """
-        Legge il draft, invia a Gemini con Exponential Backoff, e salva il codice.
-        Se feedback_prompt è fornito, agisce in modalità "Revisione" per correggere gli errori.
-        """
         print(f"[*] Lettura del draft da: {draft_filepath}...")
         try:
             with open(draft_filepath, 'r', encoding='utf-8') as file:
@@ -132,7 +129,6 @@ REGOLE DI OUTPUT
             print(f"Errore: Impossibile trovare il file {draft_filepath}")
             return False
 
-        # --- GESTIONE DEL FEEDBACK LOOP ---
         if feedback_prompt:
             print("[*] Modalità REVISIONE: Integrazione del feedback nel prompt...")
             user_message = (
@@ -151,7 +147,6 @@ REGOLE DI OUTPUT
             system_instruction=self.system_prompt
         )
 
-        # --- GESTIONE EXPONENTIAL BACKOFF CON LIMITE MASSIMO ---
         max_retries = 5        # Numero massimo di tentativi prima di arrendersi
         max_allowed_wait = 300 # Attesa massima cumulativa in secondi (5 minuti)
         current_wait = 2       # Tempo di attesa base per il primo fallimento
@@ -187,9 +182,7 @@ REGOLE DI OUTPUT
                 else:
                     print(f"[-] Errore fatale durante la generazione:\n    {error_msg}")
                     return False
-        # -------------------------------------------------------
 
-        # Pulizia dell'output
         python_code = response.text.strip()
         if python_code.startswith("```python"):
             python_code = python_code[9:]
@@ -199,7 +192,7 @@ REGOLE DI OUTPUT
             python_code = python_code[:-3]
         python_code = python_code.strip()
 
-        # Verifica che il marcatore sia presente prima di salvare
+
         marker = "# <<< PREFERENCES_INJECTION_POINT >>>"
         if marker not in python_code:
             print(
